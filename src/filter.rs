@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+/// Errors that can occur during filter parsing or evaluation.
 #[derive(Debug, Error)]
 pub enum FilterError {
     #[error("Invalid filter expression: {0}")]
@@ -22,13 +23,20 @@ pub enum FilterError {
     TypeMismatch { op: String, field: String },
 }
 
+/// Comparison operators for filter expressions.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FilterOp {
+    /// Greater than (>)
     Gt,
+    /// Greater than or equal (>=)
     Gte,
+    /// Less than (<)
     Lt,
+    /// Less than or equal (<=)
     Lte,
+    /// Equal (==)
     Eq,
+    /// Not equal (!=)
     Ne,
 }
 
@@ -50,12 +58,18 @@ impl FilterOp {
     }
 }
 
+/// Fields that can be filtered on in process queries.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FilterField {
+    /// CPU usage percentage (numeric)
     Cpu,
+    /// Memory usage percentage (numeric)
     Mem,
+    /// Process ID (numeric)
     Pid,
+    /// Process name (string, case-insensitive)
     Name,
+    /// User ID or name (string, case-sensitive)
     User,
 }
 
@@ -86,13 +100,22 @@ impl FilterField {
     }
 }
 
+/// Values that can be compared in filter expressions.
+///
+/// Stores both original and lowercase versions of strings for efficient matching.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterValue {
+    /// Floating-point value (for cpu, mem fields)
     Float(f32),
+    /// Integer value (for pid field)
     Int(u32),
+    /// String value with pre-computed lowercase for case-insensitive matching
     String { original: String, lowercase: String },
 }
 
+/// A single filter condition (field operator value).
+///
+/// Example: `cpu > 10`, `name == chrome`
 #[derive(Debug, Clone)]
 pub struct Filter {
     field: FilterField,
@@ -100,10 +123,20 @@ pub struct Filter {
     value: FilterValue,
 }
 
+/// Filter expression tree supporting AND/OR logic.
+///
+/// Parses expressions like:
+/// - Simple: `cpu > 10`
+/// - AND: `cpu > 10 and mem > 5`
+/// - OR: `cpu > 50 or name == chrome`
+/// - Mixed: `cpu > 50 or mem > 10 and pid < 1000` (OR has lower precedence)
 #[derive(Debug, Clone)]
 pub enum FilterExpr {
+    /// Single filter condition
     Simple(Filter),
+    /// Logical AND (both conditions must match)
     And(Box<FilterExpr>, Box<FilterExpr>),
+    /// Logical OR (at least one condition must match)
     Or(Box<FilterExpr>, Box<FilterExpr>),
 }
 
@@ -130,6 +163,23 @@ fn find_keyword(s: &str, keyword: &str) -> Option<usize> {
 }
 
 impl FilterExpr {
+    /// Parses a filter expression string into a FilterExpr tree.
+    ///
+    /// Supports AND/OR logic with proper precedence (OR is lower precedence than AND).
+    /// Keywords (and, or) are case-insensitive.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let expr = FilterExpr::parse("cpu > 10")?;
+    /// let expr = FilterExpr::parse("cpu > 10 and mem > 5")?;
+    /// let expr = FilterExpr::parse("cpu > 50 or name == chrome")?;
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns `FilterError` if the expression is invalid, contains unknown fields/operators,
+    /// or has type mismatches (e.g., using > with string fields).
     pub fn parse(expression: &str) -> Result<Self, FilterError> {
         let expr = expression.trim();
 
@@ -159,6 +209,15 @@ impl FilterExpr {
         Filter::parse_simple(expr).map(FilterExpr::Simple)
     }
 
+    /// Tests whether a process matches this filter expression.
+    ///
+    /// # Arguments
+    ///
+    /// * `process` - The process to test against this filter
+    ///
+    /// # Returns
+    ///
+    /// `true` if the process matches the filter expression, `false` otherwise.
     pub fn matches(&self, process: &crate::ProcessInfo) -> bool {
         match self {
             FilterExpr::Simple(f) => f.matches(process),
@@ -261,6 +320,15 @@ impl Filter {
         Ok(Self { field, op, value })
     }
 
+    /// Tests whether a process matches this filter condition.
+    ///
+    /// # Arguments
+    ///
+    /// * `process` - The process to test against this filter
+    ///
+    /// # Returns
+    ///
+    /// `true` if the process matches the filter condition, `false` otherwise.
     pub fn matches(&self, process: &crate::ProcessInfo) -> bool {
         match (&self.field, &self.value, &self.op) {
             // CPU comparisons

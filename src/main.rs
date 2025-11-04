@@ -8,7 +8,15 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use sysinfo::System;
 
-#[derive(Parser, Debug, Clone)]
+/// Minimum interval for CPU usage calculation (milliseconds).
+/// Required by sysinfo to get accurate CPU percentage.
+const CPU_SAMPLE_INTERVAL_MS: u64 = 200;
+
+/// Default number of processes to show when --top-n is not specified.
+const DEFAULT_TOP_N: usize = 20;
+
+/// Command-line arguments for the stop tool.
+#[derive(Parser, Debug)]
 #[command(name = "stop")]
 #[command(about = "Structured process and system monitoring with JSON output")]
 #[command(version)]
@@ -35,40 +43,68 @@ pub struct Args {
     pub interval: f64,
 }
 
+/// A snapshot of system and process metrics at a point in time.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SystemSnapshot {
+    /// ISO 8601 timestamp (RFC3339)
     pub timestamp: String,
+    /// System-wide metrics
     pub system: SystemMetrics,
+    /// List of process information
     pub processes: Vec<ProcessInfo>,
 }
 
+/// System-wide metrics (CPU, memory).
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SystemMetrics {
+    /// Global CPU usage percentage (0-100)
     pub cpu_usage: f32,
+    /// Total system memory in bytes
     pub memory_total: u64,
+    /// Used system memory in bytes
     pub memory_used: u64,
+    /// Memory usage percentage (0-100)
     pub memory_percent: f32,
 }
 
+/// Information about a single process.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProcessInfo {
+    /// Process ID
     pub pid: u32,
+    /// Process name
     pub name: String,
+    /// CPU usage percentage (0-100+)
     pub cpu_percent: f32,
+    /// Memory usage in bytes
     pub memory_bytes: u64,
+    /// Memory usage percentage (0-100)
     pub memory_percent: f32,
+    /// User ID (may be numeric string like "501")
     pub user: String,
+    /// Full command line
     pub command: String,
+    /// Number of threads
     pub thread_count: usize,
+    /// Total bytes read from disk
     pub disk_read_bytes: u64,
+    /// Total bytes written to disk
     pub disk_write_bytes: u64,
+    /// Number of open file descriptors (None if unavailable)
     pub open_files: Option<usize>,
 }
 
+/// Collects a snapshot of system and process metrics.
+///
+/// Sleeps for 200ms to allow accurate CPU usage calculation as required by sysinfo.
+///
+/// # Errors
+///
+/// Returns error if system information collection fails.
 pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
     let mut sys = System::new_all();
 
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    std::thread::sleep(std::time::Duration::from_millis(CPU_SAMPLE_INTERVAL_MS));
     sys.refresh_all();
 
     let total_memory = sys.total_memory();
@@ -121,6 +157,10 @@ pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
     })
 }
 
+/// Escapes a field for CSV output according to RFC 4180.
+///
+/// Wraps field in quotes and escapes internal quotes if the field contains
+/// commas, quotes, or newlines.
 pub fn escape_csv_field(field: &str) -> String {
     // RFC 4180: If field contains comma, quote, or newline, wrap in quotes and escape quotes
     if field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r') {
@@ -130,10 +170,12 @@ pub fn escape_csv_field(field: &str) -> String {
     }
 }
 
+/// Outputs the CSV header row with all column names.
 pub fn output_csv_header() {
     println!("timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command,thread_count,disk_read_bytes,disk_write_bytes,open_files");
 }
 
+/// Outputs CSV rows for all processes in the snapshot.
 pub fn output_csv_rows(snapshot: &SystemSnapshot) {
     for process in &snapshot.processes {
         let open_files_str = process.open_files.map(|n| n.to_string()).unwrap_or_default();
@@ -164,6 +206,14 @@ fn output_csv(snapshot: &SystemSnapshot) {
     output_csv_rows(snapshot);
 }
 
+/// Sorts processes in-place by the specified metric.
+///
+/// # Arguments
+///
+/// * `processes` - Mutable slice of processes to sort
+/// * `sort_by` - Sort key: "cpu", "mem"/"memory", "pid", or "name" (case-insensitive)
+///
+/// Defaults to CPU descending if an unknown sort key is provided.
 pub fn sort_processes(processes: &mut [ProcessInfo], sort_by: &str) {
     match sort_by.to_lowercase().as_str() {
         "cpu" => processes.sort_by(|a, b| {
@@ -191,6 +241,10 @@ pub fn sort_processes(processes: &mut [ProcessInfo], sort_by: &str) {
     }
 }
 
+/// Outputs snapshot in human-readable format with colors and formatting.
+///
+/// Displays system metrics, filter info, and a table of processes with
+/// color-coded CPU and memory usage.
 pub fn output_human_readable(
     snapshot: &SystemSnapshot,
     filter_expr: Option<&String>,
@@ -341,7 +395,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     sort_processes(&mut snapshot.processes, sort_by);
 
     // Apply top-n limit
-    let limit = args.top_n.unwrap_or(20);
+    let limit = args.top_n.unwrap_or(DEFAULT_TOP_N);
     snapshot.processes.truncate(limit);
 
     if args.json {

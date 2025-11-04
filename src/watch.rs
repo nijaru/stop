@@ -1,9 +1,17 @@
-use crate::{collect_snapshot, filter::FilterExpr, output_csv_header, output_csv_rows, output_human_readable, sort_processes, Args};
+use crate::{collect_snapshot, filter::FilterExpr, output_csv_header, output_csv_rows, output_human_readable, sort_processes, Args, DEFAULT_TOP_N};
 use crossterm::{cursor, terminal, ExecutableCommand};
 use std::error::Error;
 use std::io::{stdout, Write};
 use std::time::Duration;
 
+/// Runs continuous monitoring mode, refreshing data at the specified interval.
+///
+/// Outputs in NDJSON format for JSON mode, or clears screen for human-readable.
+/// Gracefully exits on broken pipe (e.g., when piping to `head`).
+///
+/// # Errors
+///
+/// Returns error if data collection or output fails.
 pub fn watch_mode(args: &Args) -> Result<(), Box<dyn Error>> {
     // Parse filter once before loop
     let filter = if let Some(filter_expr_str) = &args.filter {
@@ -43,7 +51,7 @@ pub fn watch_mode(args: &Args) -> Result<(), Box<dyn Error>> {
         sort_processes(&mut snapshot.processes, sort_by);
 
         // Apply top-n limit
-        let limit = args.top_n.unwrap_or(20);
+        let limit = args.top_n.unwrap_or(DEFAULT_TOP_N);
         snapshot.processes.truncate(limit);
 
         // Output based on mode
