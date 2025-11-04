@@ -1,4 +1,7 @@
+mod filter;
+
 use clap::Parser;
+use filter::Filter;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use sysinfo::System;
@@ -40,14 +43,14 @@ struct SystemMetrics {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct ProcessInfo {
-    pid: u32,
-    name: String,
-    cpu_percent: f32,
-    memory_bytes: u64,
-    memory_percent: f32,
-    user: String,
-    command: String,
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub name: String,
+    pub cpu_percent: f32,
+    pub memory_bytes: u64,
+    pub memory_percent: f32,
+    pub user: String,
+    pub command: String,
 }
 
 fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
@@ -99,10 +102,75 @@ fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
     })
 }
 
+fn sort_processes(processes: &mut [ProcessInfo], sort_by: &str) {
+    match sort_by.to_lowercase().as_str() {
+        "cpu" => processes.sort_by(|a, b| {
+            b.cpu_percent
+                .partial_cmp(&a.cpu_percent)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        "mem" | "memory" => processes.sort_by(|a, b| {
+            b.memory_percent
+                .partial_cmp(&a.memory_percent)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        "pid" => processes.sort_by_key(|p| p.pid),
+        "name" => processes.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+        _ => {
+            eprintln!(
+                "Warning: Unknown sort field '{}', using 'cpu'. Valid: cpu, mem, pid, name",
+                sort_by
+            );
+            processes.sort_by(|a, b| {
+                b.cpu_percent
+                    .partial_cmp(&a.cpu_percent)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
-    let snapshot = collect_snapshot()?;
+    let mut snapshot = collect_snapshot()?;
+
+    // Parse filter if provided
+    let filter = if let Some(filter_expr) = &args.filter {
+        match Filter::parse(filter_expr) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                if args.json {
+                    // Output error as JSON for AI agents
+                    let error_json = serde_json::json!({
+                        "error": "FilterError",
+                        "message": e.to_string(),
+                        "expression": filter_expr,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&error_json)?);
+                } else {
+                    eprintln!("Error: {}", e);
+                    eprintln!("Expression: {}", filter_expr);
+                }
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+
+    // Apply filter
+    if let Some(ref f) = filter {
+        snapshot.processes.retain(|p| f.matches(p));
+    }
+
+    // Apply sorting
+    let sort_by = args.sort_by.as_deref().unwrap_or("cpu");
+    sort_processes(&mut snapshot.processes, sort_by);
+
+    // Apply top-n limit
+    let limit = args.top_n.unwrap_or(20);
+    snapshot.processes.truncate(limit);
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&snapshot)?);
@@ -118,17 +186,24 @@ fn main() -> Result<(), Box<dyn Error>> {
             snapshot.system.memory_total / 1024 / 1024
         );
         println!();
+
+        if let Some(filter_expr) = &args.filter {
+            println!("Filter: {}", filter_expr);
+        }
+        println!(
+            "Sort: {} | Showing: {} processes",
+            sort_by,
+            snapshot.processes.len().min(limit)
+        );
+        println!();
+
         println!(
             "{:<8} {:<20} {:>8} {:>8} {:<10}",
             "PID", "NAME", "CPU%", "MEM%", "USER"
         );
         println!("{}", "-".repeat(70));
 
-        let mut processes = snapshot.processes;
-        processes.sort_by(|a, b| b.cpu_percent.partial_cmp(&a.cpu_percent).unwrap());
-
-        let limit = args.top_n.unwrap_or(20);
-        for process in processes.iter().take(limit) {
+        for process in &snapshot.processes {
             println!(
                 "{:<8} {:<20} {:>7.1}% {:>7.1}% {:<10}",
                 process.pid,

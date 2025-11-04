@@ -2,20 +2,20 @@
 
 ## Phase 1: MVP → v0.1.0
 
-### Core Functionality
-- [ ] Implement `--filter` flag
-  - [ ] Parse filter expressions (e.g., "cpu > 10", "mem > 50")
-  - [ ] Apply filters to process list
-  - [ ] Support multiple conditions (AND logic)
-  - [ ] Error handling for invalid expressions
-- [ ] Implement `--sort-by` flag
-  - [ ] Support: cpu, mem, pid, name
-  - [ ] Default: cpu descending
-  - [ ] Add tests for each sort option
-- [ ] Implement `--top-n` flag
-  - [ ] Limit output to N processes
-  - [ ] Default: 20 (already partially working)
-  - [ ] Verify with sorting
+### Core Functionality ✅ COMPLETE
+- [x] Implement `--filter` flag
+  - [x] Parse filter expressions (e.g., "cpu > 10", "mem > 50")
+  - [x] Apply filters to process list
+  - [x] Error handling for invalid expressions
+  - [ ] Support multiple conditions (AND logic) - deferred to Phase 2
+- [x] Implement `--sort-by` flag
+  - [x] Support: cpu, mem, pid, name
+  - [x] Default: cpu descending
+  - [x] Add tests for each sort option
+- [x] Implement `--top-n` flag
+  - [x] Limit output to N processes
+  - [x] Default: 20
+  - [x] Verify with sorting and filtering
 
 ### Output Improvements
 - [ ] Human-readable table
@@ -29,16 +29,16 @@
   - [ ] Header row with column names
 
 ### Testing
-- [ ] Unit tests
-  - [ ] Filter parsing and evaluation
-  - [ ] Sort comparison functions
-  - [ ] Output formatting
+- [x] Unit tests
+  - [x] Filter parsing and evaluation (8 tests)
+  - [x] Sort comparison functions
+  - [x] Output formatting
 - [ ] Integration tests
-  - [ ] CLI argument parsing
+  - [ ] CLI argument parsing end-to-end
   - [ ] JSON output structure validation
   - [ ] CSV output format validation
   - [ ] Error cases (invalid args)
-- [ ] Property-based tests (optional)
+- [ ] Property-based tests (optional, may defer)
   - [ ] Filter expressions always return subset
   - [ ] Sort order is stable
 

@@ -69,14 +69,34 @@
 **Terminal UI (like htop)** - More human-friendly
 - Rejected: Conflicts with AI-first goal, adds complexity
 
+## Filter Implementation Decisions (2025-11-04)
+
+**Filter expression syntax** - Chose option #1: Simple `field op value`
+- **Decision**: Implemented `cpu > 10` style syntax
+- **Rationale**:
+  - Easiest for AI agents to construct programmatically
+  - Clear error messages possible
+  - Extensible to AND/OR in Phase 2 without breaking changes
+  - jq-like comparison operators (familiar pattern)
+- **Implementation**: Type-safe enums + hand-rolled parser (no pest/nom needed)
+- **Validation**: Comprehensive type checking at parse time, not eval time
+
+**Error handling approach** - thiserror crate
+- **Decision**: Use thiserror for structured error types
+- **Rationale**:
+  - SOTA Rust error handling pattern
+  - Clear error variants (UnknownField, TypeMismatch, InvalidValue)
+  - AI-friendly: JSON serializable error messages
+- **Example**: `{"error": "FilterError", "message": "...", "expression": "..."}`
+
+**String matching semantics**
+- **Decision**:
+  - `name == chrome` → case-insensitive contains (matches "Chrome", "chromium")
+  - `user == root` → exact match (case-sensitive)
+- **Rationale**: Name matching is fuzzy (user intent), user is precise (security)
+- **Trade-off**: Different semantics for different fields (documented in research/)
+
 ## Open Questions
-
-**Filter expression syntax** - Multiple options:
-1. Simple comparison: `cpu > 10` (current plan)
-2. SQL-like: `WHERE cpu > 10 AND name LIKE '%chrome%'`
-3. JSONPath: `$[?(@.cpu_percent > 10)]`
-
-Leaning toward #1 (simplest), can extend later if needed.
 
 **Watch mode refresh rate** - Default TBD
 - Options: 1s (like top), 2s, user-configurable

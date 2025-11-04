@@ -12,19 +12,18 @@
 
 **Tech Stack**: Rust, sysinfo crate, clap CLI, serde JSON
 
-## Architecture
+## Project Structure
 
-```
-stop/
-├── src/
-│   └── main.rs          # MVP implementation (process list, system metrics, JSON output)
-├── Cargo.toml           # Dependencies: sysinfo 0.37, clap 4.5, serde, chrono
-├── README.md            # User-facing docs with roadmap
-└── ai/                  # Agent working context
-    ├── STATUS.md        # Current state
-    ├── TODO.md          # Active tasks
-    └── DECISIONS.md     # Architectural choices
-```
+- Documentation: README.md, docs/
+- AI working context: ai/
+  - PLAN.md — Strategic roadmap (Phase 1 → v1.0.0)
+  - STATUS.md — Current state (read first)
+  - TODO.md — Next steps
+  - DECISIONS.md — Architectural choices
+  - RESEARCH.md — Research notes
+  - research/ — Detailed research documents
+- Source: src/main.rs (MVP - single file)
+- Dependencies: Cargo.toml (sysinfo 0.37, clap 4.5, serde, chrono)
 
 ## Current Implementation
 
@@ -36,15 +35,46 @@ stop/
 - CLI args parsed (filter, sort-by, top-n, watch) - not implemented yet
 
 **Code structure:**
-- `SystemSnapshot` - Top-level struct
+- `SystemSnapshot` - Top-level struct (serializable to JSON)
 - `SystemMetrics` - CPU, memory totals
-- `ProcessInfo` - Per-process data
+- `ProcessInfo` - Per-process data (PID, name, CPU%, mem%, user, cmd)
 - `collect_snapshot()` - Uses sysinfo to gather data
 - `main()` - CLI parsing and output formatting
 
+## Technology Stack
+
+- **Language**: Rust (edition 2024)
+- **Package Manager**: cargo
+- **Core Dependencies**:
+  - sysinfo 0.37 — Cross-platform system metrics
+  - clap 4.5 — CLI parsing (derive API)
+  - serde 1.0 + serde_json — JSON serialization
+  - chrono 0.4 — Timestamps (RFC3339)
+
+## Development Commands
+
+```bash
+# Build
+cargo build
+cargo build --release
+
+# Test
+cargo test                    # Run test suite (when implemented)
+cargo clippy                  # Lint checks
+cargo fmt                     # Format code
+
+# Run
+cargo run -- --json          # JSON output
+cargo run -- --top-n 5       # Human-readable, top 5
+cargo run                    # Default output (top 20 by CPU)
+
+# Install
+cargo install --path .       # Install locally
+```
+
 ## Development Workflow
 
-1. Read: `ai/STATUS.md` → `ai/TODO.md` → `ai/DECISIONS.md`
+1. Read: `ai/PLAN.md` → `ai/STATUS.md` → `ai/TODO.md` → `ai/DECISIONS.md`
 2. Implement features from Phase 1 roadmap
 3. Update `ai/STATUS.md` with progress
 4. Test as you go: `cargo test`, `cargo run`
@@ -65,14 +95,18 @@ cargo run -- --top-n 5
 cargo install --path .
 ```
 
-## Phase 1 Goals (v0.1.0)
+## Current Focus
 
-See `ai/TODO.md` for current task list. Focus:
-- [ ] Implement filtering (`--filter` flag)
-- [ ] Implement sorting (`--sort-by` flag)
-- [ ] Add tests (unit + integration)
-- [ ] Human-readable table improvements
-- [ ] CSV output mode
+**Phase 1: MVP → v0.1.0** (January 2025)
+
+See ai/TODO.md for detailed task list. Priority:
+1. Implement `--filter` flag (expressions like "cpu > 10")
+2. Implement `--sort-by` flag (cpu, mem, pid, name)
+3. Implement `--top-n` flag (limit output)
+4. Add comprehensive test suite
+5. Improve human-readable output
+
+For full roadmap (v0.1.0 → v1.0.0): See ai/PLAN.md
 
 ## Key Design Principles
 
