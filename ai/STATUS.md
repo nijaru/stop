@@ -74,14 +74,25 @@
 
 ## Next Steps
 
-**Phase 2 priorities:**
-1. ✅ Watch mode implementation (`--watch` flag) - Complete
-2. ✅ Multiple filter conditions (AND/OR logic) - Complete
-3. Performance benchmarks and optimization
-4. Cross-platform testing (Linux, Windows)
-5. Consider bumping to v0.1.0 after field testing
+**Immediate (v0.0.1 validation):**
+1. ✅ Performance benchmarks - Complete (29ms overhead, well under 100ms goal)
+2. ⏳ Cross-platform testing on Fedora - Ready to test
+3. ⏳ Real-world usage validation - Use for actual tasks this week
 
-**Phase 3 considerations:**
+**Run Fedora Test:**
+```bash
+./sync-to-fedora.sh    # Sync code to Fedora
+ssh nick@fedora
+cd ~/stop
+./fedora-test.sh       # Run validation
+```
+
+**Decision Point:**
+- If Fedora tests pass + tool proves useful → Consider v0.1.0
+- If utility unclear → Shelve or find specific problem to solve
+- Don't add Phase 3 features without validated use case
+
+**Phase 3 (if justified):**
 - Parentheses for explicit filter grouping
 - Disk I/O and network metrics
 - Thread information
