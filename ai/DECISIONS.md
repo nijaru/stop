@@ -96,15 +96,41 @@
 - **Rationale**: Name matching is fuzzy (user intent), user is precise (security)
 - **Trade-off**: Different semantics for different fields (documented in research/)
 
-## Open Questions
+## Compound Filter Decisions (2025-11-04)
 
-**Watch mode refresh rate** - Default TBD
-- Options: 1s (like top), 2s, user-configurable
-- Need to test CPU overhead before deciding
+**Syntax choice** - SQL-style AND/OR keywords
+- **Decision**: `cpu > 10 and mem > 5` (case-insensitive)
+- **Rationale**:
+  - More explicit and readable than &&/||
+  - No shell escaping issues
+  - Easy for AI agents to construct
+  - Case-insensitive for user convenience (AND, and, And all work)
+- **Alternatives rejected**:
+  - Shell-style (&&, ||): Requires escaping, verbose
+  - Comma/pipe shorthand: Ambiguous, limits extensions
 
-**CSV field escaping** - How to handle commands with commas/quotes?
-- Standard RFC 4180 (quote fields, escape quotes with double-quotes)
-- Alternative: Use TSV instead (simpler, no escaping needed)
+**Precedence rules** - AND before OR (standard boolean logic)
+- **Decision**: `a OR b AND c` parses as `a OR (b AND c)`
+- **Implementation**: Recursive descent parser (OR splits first, then AND)
+- **Future**: Parentheses for explicit grouping (Phase 3)
+
+**Keyword matching** - Whole-word only
+- **Decision**: Use `is_none_or()` to check word boundaries
+- **Rationale**: Prevents false matches (e.g., "android" won't match "and")
+- **Example**: `name == android` works correctly
+
+## Resolved Questions
+
+**Watch mode refresh rate** - ✅ Decided: 2s default
+- Research showed 2s provides best balance of responsiveness vs CPU efficiency
+- User-configurable with `--interval` flag
+- See ai/research/watch-mode.md
+
+**CSV field escaping** - ✅ Decided: RFC 4180
+- Standard quote-and-escape approach
+- Handles commas, quotes, newlines properly
+- Most tools understand this format
+- Implemented and tested
 
 ## Migration Notes
 
