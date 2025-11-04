@@ -27,6 +27,7 @@ Traditional monitoring tools are designed for humans:
 ✅ JSON/CSV/human-readable output
 ✅ 29 tests passing (16 unit + 13 integration)
 ✅ Zero clippy warnings
+✅ Tested on macOS and Linux (Fedora)
 
 ## Installation
 
@@ -275,6 +276,12 @@ cargo install --path .
 - 16 unit tests (filter parsing, compound expressions, edge cases)
 - 13 integration tests (CLI, output formats, errors)
 - All tests passing, zero clippy warnings
+
+## Known Limitations
+
+- **User field**: Shows UIDs (e.g., "501", "1000") instead of usernames on both macOS and Linux - sysinfo crate limitation
+- **Collection time**: Includes mandatory 200ms sleep for accurate CPU readings
+- **Windows**: Not yet tested (planned)
 
 ## Roadmap
 

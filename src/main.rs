@@ -164,8 +164,7 @@ pub fn sort_processes(processes: &mut [ProcessInfo], sort_by: &str) {
         "name" => processes.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
         _ => {
             eprintln!(
-                "Warning: Unknown sort field '{}', using 'cpu'. Valid: cpu, mem, pid, name",
-                sort_by
+                "Warning: Unknown sort field '{sort_by}', using 'cpu'. Valid: cpu, mem, pid, name"
             );
             processes.sort_by(|a, b| {
                 b.cpu_percent
@@ -193,13 +192,13 @@ pub fn output_human_readable(
     // Color code CPU based on usage
     let cpu_value = snapshot.system.cpu_usage;
     let cpu_display = if cpu_value > 80.0 {
-        format!("{:.1}%", cpu_value).red().to_string()
+        format!("{cpu_value:.1}%").red().to_string()
     } else if cpu_value > 50.0 {
-        format!("{:.1}%", cpu_value).yellow().to_string()
+        format!("{cpu_value:.1}%").yellow().to_string()
     } else {
-        format!("{:.1}%", cpu_value).green().to_string()
+        format!("{cpu_value:.1}%").green().to_string()
     };
-    println!("  CPU: {}", cpu_display);
+    println!("  CPU: {cpu_display}");
 
     // Color code memory based on usage
     let mem_value = snapshot.system.memory_percent;
@@ -216,7 +215,7 @@ pub fn output_human_readable(
     } else {
         mem_str.green().to_string()
     };
-    println!("  Memory: {}", mem_display);
+    println!("  Memory: {mem_display}");
     println!();
 
     if let Some(filter) = filter_expr {
@@ -306,8 +305,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     });
                     println!("{}", serde_json::to_string_pretty(&error_json)?);
                 } else {
-                    eprintln!("Error: {}", e);
-                    eprintln!("Expression: {}", filter_expr_str);
+                    eprintln!("Error: {e}");
+                    eprintln!("Expression: {filter_expr_str}");
                 }
                 std::process::exit(1);
             }

@@ -45,6 +45,13 @@
 
 ## Recent Changes
 
+**Cross-platform validation (2025-11-04)**:
+- ✅ Tested on Fedora Linux (i9-13900KF, 32GB DDR5)
+- ✅ All 29 tests pass on Linux
+- ✅ Fixed clippy warnings for stricter Rust versions
+- ✅ Identical functionality on macOS and Linux
+- ⚠️ User field shows UIDs on both platforms (sysinfo limitation)
+
 **Compound filter expressions (2025-11-04)**:
 - ✅ Implemented AND/OR logic with SQL-style keywords (case-insensitive)
 - ✅ Proper precedence: AND before OR (standard boolean algebra)
@@ -100,9 +107,9 @@ cd ~/stop
 
 ## Known Issues
 
-- User field shows UID numbers on macOS (e.g., "501") instead of usernames - sysinfo limitation
-- Process commands may be empty for kernel threads (expected)
-- 200ms sleep in collect_snapshot for accurate CPU readings (acceptable)
+- **User field shows UIDs on both macOS and Linux** (e.g., "501" on macOS, "1000" on Linux) instead of usernames - sysinfo crate limitation, affects both platforms equally
+- Process commands may be empty for kernel threads (expected behavior)
+- 200ms sleep in collect_snapshot for accurate CPU readings (acceptable, documented)
 
 ## Performance
 

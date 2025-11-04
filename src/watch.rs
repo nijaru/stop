@@ -23,8 +23,8 @@ pub fn watch_mode(args: &Args) -> Result<(), Box<dyn Error>> {
                         });
                         println!("{}", serde_json::to_string(&error_json)?);
                     } else {
-                        eprintln!("Error: {}", e);
-                        eprintln!("Expression: {}", filter_expr_str);
+                        eprintln!("Error: {e}");
+                        eprintln!("Expression: {filter_expr_str}");
                     }
                     std::process::exit(1);
                 }
