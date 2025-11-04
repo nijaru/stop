@@ -59,6 +59,7 @@ pub struct ProcessInfo {
     pub memory_percent: f32,
     pub user: String,
     pub command: String,
+    pub thread_count: usize,
 }
 
 pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
@@ -94,6 +95,7 @@ pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
                     .map(|uid| uid.to_string())
                     .unwrap_or_else(|| "unknown".to_string()),
                 command: cmd_vec.join(" "),
+                thread_count: process.tasks().map(|t| t.len()).unwrap_or(1),
             }
         })
         .collect();
@@ -120,13 +122,13 @@ pub fn escape_csv_field(field: &str) -> String {
 }
 
 pub fn output_csv_header() {
-    println!("timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command");
+    println!("timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command,thread_count");
 }
 
 pub fn output_csv_rows(snapshot: &SystemSnapshot) {
     for process in &snapshot.processes {
         println!(
-            "{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{}",
             escape_csv_field(&snapshot.timestamp),
             snapshot.system.cpu_usage,
             snapshot.system.memory_total,
@@ -138,7 +140,8 @@ pub fn output_csv_rows(snapshot: &SystemSnapshot) {
             process.memory_bytes,
             process.memory_percent,
             escape_csv_field(&process.user),
-            escape_csv_field(&process.command)
+            escape_csv_field(&process.command),
+            process.thread_count
         );
     }
 }

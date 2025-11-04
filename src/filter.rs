@@ -382,6 +382,7 @@ mod tests {
             memory_percent: 10.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(expr.matches(&matching_process));
 
@@ -394,6 +395,7 @@ mod tests {
             memory_percent: 3.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(!expr.matches(&partial_match_1));
 
@@ -406,6 +408,7 @@ mod tests {
             memory_percent: 10.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(!expr.matches(&partial_match_2));
     }
@@ -423,6 +426,7 @@ mod tests {
             memory_percent: 5.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(expr.matches(&match_cpu));
 
@@ -435,6 +439,7 @@ mod tests {
             memory_percent: 15.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(expr.matches(&match_mem));
 
@@ -447,6 +452,7 @@ mod tests {
             memory_percent: 15.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(expr.matches(&match_both));
 
@@ -459,6 +465,7 @@ mod tests {
             memory_percent: 5.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(!expr.matches(&match_none));
     }
@@ -488,6 +495,7 @@ mod tests {
             memory_percent: 5.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(expr.matches(&match_cpu));
 
@@ -500,6 +508,7 @@ mod tests {
             memory_percent: 15.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(expr.matches(&match_and));
 
@@ -512,6 +521,7 @@ mod tests {
             memory_percent: 15.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(!expr.matches(&no_match));
     }
@@ -529,6 +539,7 @@ mod tests {
             memory_percent: 5.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(expr.matches(&process));
     }
@@ -563,6 +574,7 @@ mod tests {
             memory_percent: 5.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(expr.matches(&chrome));
 
@@ -574,6 +586,7 @@ mod tests {
             memory_percent: 5.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(expr.matches(&firefox));
 
@@ -585,6 +598,7 @@ mod tests {
             memory_percent: 5.0,
             user: "user".to_string(),
             command: "cmd".to_string(),
+            thread_count: 1,
         };
         assert!(!expr.matches(&other));
     }
