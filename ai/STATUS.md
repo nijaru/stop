@@ -81,28 +81,17 @@
 
 ## Next Steps
 
-**Immediate (v0.0.1 validation):**
-1. ✅ Performance benchmarks - Complete (29ms overhead, well under 100ms goal)
-2. ⏳ Cross-platform testing on Fedora - Ready to test
-3. ⏳ Real-world usage validation - Use for actual tasks this week
+**Completed:**
+1. ✅ Performance benchmarks (29ms overhead, well under 100ms goal)
+2. ✅ Cross-platform testing on Fedora (all tests pass)
+3. ✅ All documentation updated
 
-**Run Fedora Test:**
-```bash
-./sync-to-fedora.sh    # Sync code to Fedora
-ssh nick@fedora
-cd ~/stop
-./fedora-test.sh       # Run validation
-```
-
-**Decision Point:**
-- If Fedora tests pass + tool proves useful → Consider v0.1.0
-- If utility unclear → Shelve or find specific problem to solve
-- Don't add Phase 3 features without validated use case
-
-**Phase 3 (if justified):**
-- Parentheses for explicit filter grouping
-- Disk I/O and network metrics
-- Thread information
+**Next: Phase 3 Features**
+- Disk I/O metrics per process (read/write bytes)
+- Network metrics per process (rx/tx bytes)
+- Thread information (thread count)
+- Open file descriptors/handles
+- Parentheses for explicit filter grouping (optional enhancement)
 - Windows support testing
 
 ## Known Issues

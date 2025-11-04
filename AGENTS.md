@@ -121,15 +121,11 @@ cargo install --path .
 - ✅ Performance validated (29ms overhead)
 - ✅ Cross-platform tested (macOS, Linux)
 
-**Current Priority**: Real-world usage validation
-- Use tool for actual tasks to prove utility
-- Gather feedback on what's useful vs. what's missing
-- Don't add Phase 3 features without proven use case
-
-**Decision Point**:
-- If proven useful → Consider v0.1.0, publish to crates.io
-- If unclear utility → Find specific niche or shelve
-- See ai/research/real-world-usage.md for testing framework
+**Current Priority**: Continue building Phase 3 features
+- Add disk I/O and network metrics per process
+- Add thread information
+- Improve documentation and examples
+- Stay in 0.0.x until ready for v0.1.0
 
 For full roadmap: See ai/PLAN.md and ai/STATUS.md
 

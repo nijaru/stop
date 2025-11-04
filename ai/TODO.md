@@ -23,13 +23,7 @@
 - [x] ai/ context files (PLAN, STATUS, DECISIONS, RESEARCH)
 - [x] Research docs (filter syntax, watch mode, compound filters, benchmarks)
 
-## Current Priority: Validation & Traction
-
-### Real-World Usage Testing
-- [ ] Use stop for actual tasks this week (see ai/research/real-world-usage.md)
-- [ ] Document what works well vs. what's missing
-- [ ] Identify killer features or lack thereof
-- [ ] **Decision**: Proceed to v0.1.0, pivot, or shelve based on utility
+## Current Priority: Continue Building
 
 ### Documentation for Traction
 - [ ] Add usage examples to README (more practical scenarios)
@@ -45,13 +39,13 @@
 - [ ] Man page generation
 - [ ] GitHub Actions CI (test on Linux/macOS)
 
-## Phase 3: Advanced Monitoring (Future - If Justified)
+## Phase 3: Advanced Monitoring (Next Features)
 
-**Only proceed if tool proves useful in current form.**
+**Ready to implement:**
 
-- [ ] Disk I/O metrics per process
-- [ ] Network metrics per process
-- [ ] Thread information
+- [ ] Disk I/O metrics per process (read/write bytes)
+- [ ] Network metrics per process (rx/tx bytes)
+- [ ] Thread information (thread count per process)
 - [ ] Open file descriptors/handles
 - [ ] Windows support testing
 
