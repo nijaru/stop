@@ -60,14 +60,14 @@ Build a production-ready, cross-platform system monitoring tool with structured 
 - [x] Performance verified: 29ms overhead (< 100ms goal)
 
 **Phase 3 (Current Focus) - Implementation Order**:
-1. [ ] Thread information (easiest, sysinfo API available)
-   - Add thread count to ProcessInfo struct
-   - Update JSON schema
-   - Add tests
-2. [ ] Disk I/O metrics per process (high value)
-   - Add disk_read_bytes, disk_write_bytes to ProcessInfo
-   - Use sysinfo disk_usage() API
-   - Test on macOS and Linux (may have platform differences)
+1. [x] Thread information (easiest, sysinfo API available)
+   - ✅ Add thread count to ProcessInfo struct
+   - ✅ Update JSON schema
+   - ✅ Add tests
+2. [x] Disk I/O metrics per process (high value)
+   - ✅ Add disk_read_bytes, disk_write_bytes to ProcessInfo
+   - ✅ Use sysinfo disk_usage() API
+   - ✅ Test on macOS and Linux (works on both platforms)
 3. [ ] Network metrics per process (valuable but complex)
    - Add network_rx_bytes, network_tx_bytes to ProcessInfo
    - Research: sysinfo support? Platform-specific code needed?

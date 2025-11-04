@@ -383,6 +383,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(expr.matches(&matching_process));
 
@@ -396,6 +398,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(!expr.matches(&partial_match_1));
 
@@ -409,6 +413,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(!expr.matches(&partial_match_2));
     }
@@ -427,6 +433,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(expr.matches(&match_cpu));
 
@@ -440,6 +448,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(expr.matches(&match_mem));
 
@@ -453,6 +463,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(expr.matches(&match_both));
 
@@ -466,6 +478,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(!expr.matches(&match_none));
     }
@@ -496,6 +510,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(expr.matches(&match_cpu));
 
@@ -509,6 +525,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(expr.matches(&match_and));
 
@@ -522,6 +540,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(!expr.matches(&no_match));
     }
@@ -540,6 +560,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(expr.matches(&process));
     }
@@ -575,6 +597,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(expr.matches(&chrome));
 
@@ -587,6 +611,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(expr.matches(&firefox));
 
@@ -599,6 +625,8 @@ mod tests {
             user: "user".to_string(),
             command: "cmd".to_string(),
             thread_count: 1,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
         };
         assert!(!expr.matches(&other));
     }

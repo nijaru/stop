@@ -60,6 +60,8 @@ pub struct ProcessInfo {
     pub user: String,
     pub command: String,
     pub thread_count: usize,
+    pub disk_read_bytes: u64,
+    pub disk_write_bytes: u64,
 }
 
 pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
@@ -84,6 +86,9 @@ pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
                 .map(|s| s.to_string_lossy().to_string())
                 .collect();
 
+            let disk_usage = process.disk_usage();
+            let (disk_read, disk_write) = (disk_usage.total_read_bytes, disk_usage.total_written_bytes);
+
             ProcessInfo {
                 pid: pid.as_u32(),
                 name: process.name().to_string_lossy().to_string(),
@@ -96,6 +101,8 @@ pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
                     .unwrap_or_else(|| "unknown".to_string()),
                 command: cmd_vec.join(" "),
                 thread_count: process.tasks().map(|t| t.len()).unwrap_or(1),
+                disk_read_bytes: disk_read,
+                disk_write_bytes: disk_write,
             }
         })
         .collect();
@@ -122,13 +129,13 @@ pub fn escape_csv_field(field: &str) -> String {
 }
 
 pub fn output_csv_header() {
-    println!("timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command,thread_count");
+    println!("timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command,thread_count,disk_read_bytes,disk_write_bytes");
 }
 
 pub fn output_csv_rows(snapshot: &SystemSnapshot) {
     for process in &snapshot.processes {
         println!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             escape_csv_field(&snapshot.timestamp),
             snapshot.system.cpu_usage,
             snapshot.system.memory_total,
@@ -141,7 +148,9 @@ pub fn output_csv_rows(snapshot: &SystemSnapshot) {
             process.memory_percent,
             escape_csv_field(&process.user),
             escape_csv_field(&process.command),
-            process.thread_count
+            process.thread_count,
+            process.disk_read_bytes,
+            process.disk_write_bytes
         );
     }
 }
