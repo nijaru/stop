@@ -12,6 +12,8 @@
 - ✅ Process listing with system metrics
 - ✅ Filter functionality (`--filter` flag)
   - Simple `field op value` syntax
+  - Compound expressions with `and`/`or` logic (case-insensitive)
+  - Proper precedence (AND before OR)
   - Fields: cpu, mem, pid, name, user
   - Operators: >, >=, <, <=, ==, !=
   - AI-friendly JSON error messages
@@ -28,7 +30,7 @@
   - Default 2s interval, configurable with `--interval`
 
 **Code Quality:**
-- ✅ 21 tests (8 unit + 13 integration), all passing
+- ✅ 29 tests (16 unit + 13 integration), all passing
 - ✅ Zero clippy warnings
 - ✅ Proper error handling with thiserror
 - ✅ Type-safe filter module with parse-time validation
@@ -36,12 +38,21 @@
 
 ## What Doesn't Work Yet
 
-- ❌ Multiple filter conditions (AND/OR logic)
+- ❌ Parentheses for complex filter grouping (Phase 3)
 - ❌ Disk I/O metrics
 - ❌ Network metrics
 - ❌ Thread information
 
 ## Recent Changes
+
+**Compound filter expressions (2025-11-04)**:
+- ✅ Implemented AND/OR logic with SQL-style keywords (case-insensitive)
+- ✅ Proper precedence: AND before OR (standard boolean algebra)
+- ✅ Recursive descent parser with whole-word keyword matching
+- ✅ Short-circuit evaluation for performance
+- ✅ 8 new unit tests for compound expressions (29 tests total)
+- ✅ Updated README with comprehensive examples
+- ✅ End-to-end testing verified
 
 **Phase 1 complete (2025-11-04)**:
 - ✅ Implemented filter module with type-safe parsing and evaluation
@@ -64,11 +75,17 @@
 ## Next Steps
 
 **Phase 2 priorities:**
-1. Watch mode implementation (`--watch` flag)
-2. Multiple filter conditions (AND/OR logic)
+1. ✅ Watch mode implementation (`--watch` flag) - Complete
+2. ✅ Multiple filter conditions (AND/OR logic) - Complete
 3. Performance benchmarks and optimization
 4. Cross-platform testing (Linux, Windows)
 5. Consider bumping to v0.1.0 after field testing
+
+**Phase 3 considerations:**
+- Parentheses for explicit filter grouping
+- Disk I/O and network metrics
+- Thread information
+- Windows support testing
 
 ## Known Issues
 

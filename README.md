@@ -23,9 +23,9 @@ Traditional monitoring tools are designed for humans:
 
 **v0.0.1** - Core functionality complete
 
-✅ Filter, sort, limit processes
+✅ Filter, sort, limit processes (with AND/OR logic)
 ✅ JSON/CSV/human-readable output
-✅ 21 tests passing
+✅ 29 tests passing (16 unit + 13 integration)
 ✅ Zero clippy warnings
 
 ## Installation
@@ -69,7 +69,7 @@ stop --watch --json | jq '.system.cpu_usage'  # NDJSON stream
 
 ## Filter Syntax
 
-Simple `field op value` expressions:
+Build filter expressions with `field op value` and combine them with `and`/`or`:
 
 **Fields:**
 - `cpu` - CPU percentage (float)
@@ -81,8 +81,11 @@ Simple `field op value` expressions:
 **Operators:**
 - `>`, `>=`, `<`, `<=` - Numeric comparisons
 - `==`, `!=` - Equality (works with all fields)
+- `and`, `or` - Combine conditions (case-insensitive)
 
-**Examples:**
+**Precedence:** `and` has higher precedence than `or` (standard boolean logic)
+
+**Simple Examples:**
 ```bash
 # High CPU processes
 stop --filter "cpu > 50"
@@ -100,6 +103,29 @@ stop --filter "name == chrome"
 stop --filter "user == root"
 ```
 
+**Compound Examples:**
+```bash
+# High CPU AND high memory
+stop --filter "cpu > 50 and mem > 10"
+
+# Chrome OR Firefox processes
+stop --filter "name == chrome or name == firefox"
+
+# High resource usage (either CPU or memory)
+stop --filter "cpu > 50 or mem > 10"
+
+# System processes with high CPU
+stop --filter "pid < 1000 and cpu > 5"
+
+# Case-insensitive keywords (all equivalent)
+stop --filter "cpu > 10 AND mem > 5"
+stop --filter "cpu > 10 and mem > 5"
+stop --filter "cpu > 10 And mem > 5"
+
+# Mixed AND/OR with precedence: (cpu > 50 AND mem > 10) OR name == chrome
+stop --filter "cpu > 50 and mem > 10 or name == chrome"
+```
+
 ## Features
 
 ### ✅ Implemented (v0.0.1)
@@ -111,8 +137,10 @@ stop --filter "user == root"
 
 **Filtering:**
 - Simple `field op value` syntax
+- Compound expressions with `and`/`or` logic
 - Fields: cpu, mem, pid, name, user
 - Operators: `>`, `>=`, `<`, `<=`, `==`, `!=`
+- Proper precedence (AND before OR)
 - AI-friendly JSON error messages
 
 **Sorting:**
@@ -132,11 +160,11 @@ stop --filter "user == root"
 
 ### 🚧 Planned
 
-- Multiple filter conditions (AND/OR logic)
 - Disk I/O metrics
 - Network metrics
 - Thread information
 - Windows support
+- Parentheses for complex filter grouping
 
 ## Example Output
 
@@ -214,7 +242,7 @@ fi
 ## Development
 
 ```bash
-# Run tests (21 tests: 8 unit + 13 integration)
+# Run tests (29 tests: 16 unit + 13 integration)
 cargo test
 
 # Check code quality
@@ -244,7 +272,7 @@ cargo install --path .
 - Minimal allocations in hot paths
 
 **Testing:**
-- 8 unit tests (filter parsing, edge cases)
+- 16 unit tests (filter parsing, compound expressions, edge cases)
 - 13 integration tests (CLI, output formats, errors)
 - All tests passing, zero clippy warnings
 
@@ -253,10 +281,10 @@ cargo install --path .
 See `ai/PLAN.md` for detailed 5-phase roadmap.
 
 **Next up:**
-- Watch mode (continuous monitoring)
-- Multiple filter conditions (AND/OR)
 - Disk I/O and network metrics
+- Thread information
 - Windows support
+- Parentheses for complex filter grouping
 - Publish to crates.io
 
 ## Contributing

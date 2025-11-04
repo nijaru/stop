@@ -100,8 +100,87 @@ pub struct Filter {
     value: FilterValue,
 }
 
-impl Filter {
+#[derive(Debug, Clone)]
+pub enum FilterExpr {
+    Simple(Filter),
+    And(Box<FilterExpr>, Box<FilterExpr>),
+    Or(Box<FilterExpr>, Box<FilterExpr>),
+}
+
+fn find_keyword(s: &str, keyword: &str) -> Option<usize> {
+    let keyword_lower = keyword.to_lowercase();
+    let s_lower = s.to_lowercase();
+
+    let mut pos = 0;
+    while let Some(found) = s_lower[pos..].find(&keyword_lower) {
+        let actual_pos = pos + found;
+
+        // Check if it's a whole word (surrounded by spaces or boundaries)
+        let before_ok = actual_pos == 0 || s_lower.chars().nth(actual_pos - 1).is_none_or(|c| c.is_whitespace());
+        let after_pos = actual_pos + keyword_lower.len();
+        let after_ok = after_pos >= s_lower.len() || s_lower.chars().nth(after_pos).is_none_or(|c| c.is_whitespace());
+
+        if before_ok && after_ok {
+            return Some(actual_pos);
+        }
+
+        pos = actual_pos + 1;
+    }
+    None
+}
+
+impl FilterExpr {
     pub fn parse(expression: &str) -> Result<Self, FilterError> {
+        let expr = expression.trim();
+
+        // Split on OR (lowest precedence)
+        if let Some(pos) = find_keyword(expr, "or") {
+            let left_str = expr[..pos].trim();
+            let right_str = expr[pos + 2..].trim();
+
+            let left = Self::parse(left_str)?;
+            let right = Self::parse(right_str)?;
+
+            return Ok(FilterExpr::Or(Box::new(left), Box::new(right)));
+        }
+
+        // Split on AND (higher precedence)
+        if let Some(pos) = find_keyword(expr, "and") {
+            let left_str = expr[..pos].trim();
+            let right_str = expr[pos + 3..].trim();
+
+            let left = Self::parse(left_str)?;
+            let right = Self::parse(right_str)?;
+
+            return Ok(FilterExpr::And(Box::new(left), Box::new(right)));
+        }
+
+        // Simple condition
+        Filter::parse_simple(expr).map(FilterExpr::Simple)
+    }
+
+    pub fn matches(&self, process: &crate::ProcessInfo) -> bool {
+        match self {
+            FilterExpr::Simple(f) => f.matches(process),
+            FilterExpr::And(l, r) => l.matches(process) && r.matches(process),
+            FilterExpr::Or(l, r) => l.matches(process) || r.matches(process),
+        }
+    }
+}
+
+impl Filter {
+    #[allow(dead_code)] // Kept for backward compatibility if used as library
+    pub fn parse(expression: &str) -> Result<Self, FilterError> {
+        // For backward compatibility, parse as FilterExpr then extract if simple
+        match FilterExpr::parse(expression)? {
+            FilterExpr::Simple(f) => Ok(f),
+            _ => Err(FilterError::InvalidExpression(
+                "Use FilterExpr::parse for compound expressions".to_string(),
+            )),
+        }
+    }
+
+    fn parse_simple(expression: &str) -> Result<Self, FilterError> {
         let expr = expression.trim();
 
         if expr.is_empty() {
@@ -287,5 +366,226 @@ mod tests {
     fn test_empty_expression() {
         let result = Filter::parse("");
         assert!(matches!(result, Err(FilterError::InvalidExpression(_))));
+    }
+
+    // Compound expression tests
+    #[test]
+    fn test_and_filter() {
+        let expr = FilterExpr::parse("cpu > 10 and mem > 5").unwrap();
+
+        // Test process that matches both conditions
+        let matching_process = crate::ProcessInfo {
+            pid: 1,
+            name: "test".to_string(),
+            cpu_percent: 15.0,
+            memory_bytes: 1024,
+            memory_percent: 10.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(expr.matches(&matching_process));
+
+        // Test process that matches only first condition
+        let partial_match_1 = crate::ProcessInfo {
+            pid: 2,
+            name: "test".to_string(),
+            cpu_percent: 15.0,
+            memory_bytes: 1024,
+            memory_percent: 3.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(!expr.matches(&partial_match_1));
+
+        // Test process that matches only second condition
+        let partial_match_2 = crate::ProcessInfo {
+            pid: 3,
+            name: "test".to_string(),
+            cpu_percent: 5.0,
+            memory_bytes: 1024,
+            memory_percent: 10.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(!expr.matches(&partial_match_2));
+    }
+
+    #[test]
+    fn test_or_filter() {
+        let expr = FilterExpr::parse("cpu > 50 or mem > 10").unwrap();
+
+        // Test process that matches first condition
+        let match_cpu = crate::ProcessInfo {
+            pid: 1,
+            name: "test".to_string(),
+            cpu_percent: 60.0,
+            memory_bytes: 1024,
+            memory_percent: 5.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(expr.matches(&match_cpu));
+
+        // Test process that matches second condition
+        let match_mem = crate::ProcessInfo {
+            pid: 2,
+            name: "test".to_string(),
+            cpu_percent: 10.0,
+            memory_bytes: 1024,
+            memory_percent: 15.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(expr.matches(&match_mem));
+
+        // Test process that matches both conditions
+        let match_both = crate::ProcessInfo {
+            pid: 3,
+            name: "test".to_string(),
+            cpu_percent: 60.0,
+            memory_bytes: 1024,
+            memory_percent: 15.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(expr.matches(&match_both));
+
+        // Test process that matches neither condition
+        let match_none = crate::ProcessInfo {
+            pid: 4,
+            name: "test".to_string(),
+            cpu_percent: 10.0,
+            memory_bytes: 1024,
+            memory_percent: 5.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(!expr.matches(&match_none));
+    }
+
+    #[test]
+    fn test_case_insensitive_keywords() {
+        assert!(FilterExpr::parse("cpu > 10 AND mem > 5").is_ok());
+        assert!(FilterExpr::parse("cpu > 10 And mem > 5").is_ok());
+        assert!(FilterExpr::parse("cpu > 10 and mem > 5").is_ok());
+
+        assert!(FilterExpr::parse("cpu > 10 OR mem > 5").is_ok());
+        assert!(FilterExpr::parse("cpu > 10 Or mem > 5").is_ok());
+        assert!(FilterExpr::parse("cpu > 10 or mem > 5").is_ok());
+    }
+
+    #[test]
+    fn test_mixed_and_or_precedence() {
+        // Test: a OR b AND c should parse as: a OR (b AND c)
+        let expr = FilterExpr::parse("cpu > 50 or mem > 10 and pid < 1000").unwrap();
+
+        // Process with cpu > 50 should match (first condition of OR)
+        let match_cpu = crate::ProcessInfo {
+            pid: 5000,
+            name: "test".to_string(),
+            cpu_percent: 60.0,
+            memory_bytes: 1024,
+            memory_percent: 5.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(expr.matches(&match_cpu));
+
+        // Process with mem > 10 AND pid < 1000 should match (second part)
+        let match_and = crate::ProcessInfo {
+            pid: 500,
+            name: "test".to_string(),
+            cpu_percent: 10.0,
+            memory_bytes: 1024,
+            memory_percent: 15.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(expr.matches(&match_and));
+
+        // Process with only mem > 10 but pid >= 1000 should NOT match
+        let no_match = crate::ProcessInfo {
+            pid: 5000,
+            name: "test".to_string(),
+            cpu_percent: 10.0,
+            memory_bytes: 1024,
+            memory_percent: 15.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(!expr.matches(&no_match));
+    }
+
+    #[test]
+    fn test_keyword_in_string_values() {
+        // "android" contains "and" but should not be parsed as keyword
+        let expr = FilterExpr::parse("name == android").unwrap();
+
+        let process = crate::ProcessInfo {
+            pid: 1,
+            name: "android_app".to_string(),
+            cpu_percent: 10.0,
+            memory_bytes: 1024,
+            memory_percent: 5.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(expr.matches(&process));
+    }
+
+    #[test]
+    fn test_multiple_spaces_in_compound() {
+        // Should handle extra whitespace gracefully
+        assert!(FilterExpr::parse("cpu > 10   and   mem > 5").is_ok());
+        assert!(FilterExpr::parse("cpu > 10 or  mem > 5").is_ok());
+    }
+
+    #[test]
+    fn test_empty_condition_in_compound() {
+        // Should fail gracefully with empty conditions
+        let result = FilterExpr::parse("cpu > 10 and");
+        assert!(result.is_err());
+
+        let result = FilterExpr::parse("or mem > 5");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_complex_string_filters_with_and_or() {
+        // Chrome OR Firefox
+        let expr = FilterExpr::parse("name == chrome or name == firefox").unwrap();
+
+        let chrome = crate::ProcessInfo {
+            pid: 1,
+            name: "chrome".to_string(),
+            cpu_percent: 10.0,
+            memory_bytes: 1024,
+            memory_percent: 5.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(expr.matches(&chrome));
+
+        let firefox = crate::ProcessInfo {
+            pid: 2,
+            name: "firefox".to_string(),
+            cpu_percent: 10.0,
+            memory_bytes: 1024,
+            memory_percent: 5.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(expr.matches(&firefox));
+
+        let other = crate::ProcessInfo {
+            pid: 3,
+            name: "safari".to_string(),
+            cpu_percent: 10.0,
+            memory_bytes: 1024,
+            memory_percent: 5.0,
+            user: "user".to_string(),
+            command: "cmd".to_string(),
+        };
+        assert!(!expr.matches(&other));
     }
 }

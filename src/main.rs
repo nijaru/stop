@@ -2,7 +2,7 @@ mod filter;
 mod watch;
 
 use clap::Parser;
-use filter::Filter;
+use filter::FilterExpr;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -293,8 +293,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut snapshot = collect_snapshot()?;
 
     // Parse filter if provided
-    let filter = if let Some(filter_expr) = &args.filter {
-        match Filter::parse(filter_expr) {
+    let filter = if let Some(filter_expr_str) = &args.filter {
+        match FilterExpr::parse(filter_expr_str) {
             Ok(f) => Some(f),
             Err(e) => {
                 if args.json {
@@ -302,12 +302,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let error_json = serde_json::json!({
                         "error": "FilterError",
                         "message": e.to_string(),
-                        "expression": filter_expr,
+                        "expression": filter_expr_str,
                     });
                     println!("{}", serde_json::to_string_pretty(&error_json)?);
                 } else {
                     eprintln!("Error: {}", e);
-                    eprintln!("Expression: {}", filter_expr);
+                    eprintln!("Expression: {}", filter_expr_str);
                 }
                 std::process::exit(1);
             }
