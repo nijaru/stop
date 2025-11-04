@@ -5,33 +5,33 @@ use std::io::{stdout, Write};
 use std::time::Duration;
 
 pub fn watch_mode(args: &Args) -> Result<(), Box<dyn Error>> {
+    // Parse filter once before loop
+    let filter = if let Some(filter_expr_str) = &args.filter {
+        match FilterExpr::parse(filter_expr_str) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                if args.json {
+                    let error_json = serde_json::json!({
+                        "error": "FilterError",
+                        "message": e.to_string(),
+                        "expression": filter_expr_str,
+                    });
+                    println!("{}", serde_json::to_string(&error_json)?);
+                } else {
+                    eprintln!("Error: {e}");
+                    eprintln!("Expression: {filter_expr_str}");
+                }
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+
     let mut first_iteration = true;
 
     loop {
         let mut snapshot = collect_snapshot()?;
-
-        // Parse filter if provided
-        let filter = if let Some(filter_expr_str) = &args.filter {
-            match FilterExpr::parse(filter_expr_str) {
-                Ok(f) => Some(f),
-                Err(e) => {
-                    if args.json {
-                        let error_json = serde_json::json!({
-                            "error": "FilterError",
-                            "message": e.to_string(),
-                            "expression": filter_expr_str,
-                        });
-                        println!("{}", serde_json::to_string(&error_json)?);
-                    } else {
-                        eprintln!("Error: {e}");
-                        eprintln!("Expression: {filter_expr_str}");
-                    }
-                    std::process::exit(1);
-                }
-            }
-        } else {
-            None
-        };
 
         // Apply filter
         if let Some(ref f) = filter {
@@ -50,7 +50,12 @@ pub fn watch_mode(args: &Args) -> Result<(), Box<dyn Error>> {
         if args.json {
             // NDJSON: one JSON object per line
             println!("{}", serde_json::to_string(&snapshot)?);
-            stdout().flush()?;
+            if let Err(e) = stdout().flush() {
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    return Ok(()); // Graceful exit when output is closed
+                }
+                return Err(e.into());
+            }
         } else if args.csv {
             // CSV: header once, then rows
             if first_iteration {
@@ -58,14 +63,24 @@ pub fn watch_mode(args: &Args) -> Result<(), Box<dyn Error>> {
                 first_iteration = false;
             }
             output_csv_rows(&snapshot);
-            stdout().flush()?;
+            if let Err(e) = stdout().flush() {
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    return Ok(()); // Graceful exit when output is closed
+                }
+                return Err(e.into());
+            }
         } else {
             // Human-readable: clear screen and redraw
             stdout()
                 .execute(terminal::Clear(terminal::ClearType::All))?
                 .execute(cursor::MoveTo(0, 0))?;
             output_human_readable(&snapshot, args.filter.as_ref(), sort_by, limit);
-            stdout().flush()?;
+            if let Err(e) = stdout().flush() {
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    return Ok(()); // Graceful exit when output is closed
+                }
+                return Err(e.into());
+            }
         }
 
         // Sleep before next iteration

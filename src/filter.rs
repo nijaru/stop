@@ -90,7 +90,7 @@ impl FilterField {
 pub enum FilterValue {
     Float(f32),
     Int(u32),
-    String(String),
+    String { original: String, lowercase: String },
 }
 
 #[derive(Debug, Clone)]
@@ -251,7 +251,11 @@ impl Filter {
                     value: value_str.to_string(),
                     reason: "Expected an integer (e.g., 1000)".to_string(),
                 })?,
-            FilterField::Name | FilterField::User => FilterValue::String(value_str.to_string()),
+            FilterField::Name | FilterField::User => {
+                let original = value_str.to_string();
+                let lowercase = original.to_lowercase();
+                FilterValue::String { original, lowercase }
+            }
         };
 
         Ok(Self { field, op, value })
@@ -272,15 +276,15 @@ impl Filter {
                 Self::compare_int(process.pid, *val, *op)
             }
             // Name matching (case-insensitive contains for ==, inverse for !=)
-            (FilterField::Name, FilterValue::String(val), FilterOp::Eq) => {
-                process.name.to_lowercase().contains(&val.to_lowercase())
+            (FilterField::Name, FilterValue::String { lowercase, .. }, FilterOp::Eq) => {
+                process.name.to_lowercase().contains(lowercase)
             }
-            (FilterField::Name, FilterValue::String(val), FilterOp::Ne) => {
-                !process.name.to_lowercase().contains(&val.to_lowercase())
+            (FilterField::Name, FilterValue::String { lowercase, .. }, FilterOp::Ne) => {
+                !process.name.to_lowercase().contains(lowercase)
             }
             // User matching (exact match, case-sensitive)
-            (FilterField::User, FilterValue::String(val), FilterOp::Eq) => &process.user == val,
-            (FilterField::User, FilterValue::String(val), FilterOp::Ne) => &process.user != val,
+            (FilterField::User, FilterValue::String { original, .. }, FilterOp::Eq) => &process.user == original,
+            (FilterField::User, FilterValue::String { original, .. }, FilterOp::Ne) => &process.user != original,
             // Invalid combinations (should be caught during parsing)
             _ => false,
         }
@@ -333,7 +337,7 @@ mod tests {
         let filter = Filter::parse("name == chrome").unwrap();
         assert!(matches!(filter.field, FilterField::Name));
         assert!(matches!(filter.op, FilterOp::Eq));
-        assert!(matches!(filter.value, FilterValue::String(_)));
+        assert!(matches!(filter.value, FilterValue::String { .. }));
     }
 
     #[test]

@@ -84,7 +84,7 @@ pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
             let cmd_vec: Vec<String> = process
                 .cmd()
                 .iter()
-                .map(|s| s.to_string_lossy().to_string())
+                .map(|s| s.to_string_lossy().into_owned())
                 .collect();
 
             let disk_usage = process.disk_usage();
@@ -92,7 +92,7 @@ pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
 
             ProcessInfo {
                 pid: pid.as_u32(),
-                name: process.name().to_string_lossy().to_string(),
+                name: process.name().to_string_lossy().into_owned(),
                 cpu_percent: process.cpu_usage(),
                 memory_bytes: process.memory(),
                 memory_percent: (process.memory() as f64 / total_memory as f64 * 100.0) as f32,
@@ -177,7 +177,7 @@ pub fn sort_processes(processes: &mut [ProcessInfo], sort_by: &str) {
                 .unwrap_or(std::cmp::Ordering::Equal)
         }),
         "pid" => processes.sort_by_key(|p| p.pid),
-        "name" => processes.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+        "name" => processes.sort_by_cached_key(|p| p.name.to_lowercase()),
         _ => {
             eprintln!(
                 "Warning: Unknown sort field '{sort_by}', using 'cpu'. Valid: cpu, mem, pid, name"
