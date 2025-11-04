@@ -7,14 +7,16 @@ Build a production-ready, cross-platform system monitoring tool with structured 
 
 ## Current State (v0.0.1)
 
-**Completed**: Phases 1, 2, and 4 ahead of schedule
+**Completed**: Phases 1, 2, 3, and 4
 - ✅ Core filtering with AND/OR logic
 - ✅ Watch mode with NDJSON streaming
 - ✅ CSV output (RFC 4180 compliant)
+- ✅ Advanced monitoring: thread count, disk I/O, open file descriptors
 - ✅ 29 tests, zero clippy warnings
 - ✅ Performance: 29ms overhead (< 100ms goal)
+- ✅ Cross-platform: macOS and Linux tested
 
-**Next**: Phase 3 (Advanced Monitoring) or field testing for v0.1.0
+**Next**: Field testing, consider version bump to 0.1.0
 
 ## Milestones
 
@@ -22,7 +24,7 @@ Build a production-ready, cross-platform system monitoring tool with structured 
 |-------|----------|--------|--------------|------------------|
 | Phase 1: MVP | Jan 2025 | ✅ COMPLETE | Filter, sort, tests, improved output | All CLI flags functional, test coverage >80% |
 | Phase 2: Query & Filter | Feb 2025 | ✅ COMPLETE | Multiple conditions (AND/OR), CSV output | Complex queries work, CSV RFC 4180 compliant |
-| Phase 3: Advanced Monitoring | Mar 2025 | ← CURRENT | Disk I/O, network, threads | All metrics accurate, cross-platform |
+| Phase 3: Advanced Monitoring | Mar 2025 | ✅ COMPLETE | Thread count, disk I/O, open files | Metrics accurate on macOS/Linux |
 | Phase 4: Watch Mode | Feb 2025 | ✅ COMPLETE | Continuous monitoring, NDJSON | <100ms overhead, configurable interval |
 | Phase 5: Production | Q2 2025 | Planned | Stable API, Windows support, publish | Published to crates.io, CI/CD complete |
 
@@ -68,17 +70,18 @@ Build a production-ready, cross-platform system monitoring tool with structured 
    - ✅ Add disk_read_bytes, disk_write_bytes to ProcessInfo
    - ✅ Use sysinfo disk_usage() API
    - ✅ Test on macOS and Linux (works on both platforms)
-3. [ ] Network metrics per process (valuable but complex)
-   - Add network_rx_bytes, network_tx_bytes to ProcessInfo
-   - Research: sysinfo support? Platform-specific code needed?
-   - May require /proc parsing on Linux, system calls on macOS
-4. [ ] Open file descriptors/handles (nice-to-have)
-   - Add open_files count to ProcessInfo
-   - Platform-specific: /proc on Linux, lsof on macOS
-   - Defer if too complex
+3. [~] Network metrics per process (DEFERRED - see ai/research/network-metrics.md)
+   - ❌ sysinfo 0.37 does NOT support per-process network metrics
+   - Would require platform-specific code (/proc on Linux, lsof on macOS)
+   - Decision: Document limitation, defer to future release if demand exists
+4. [x] Open file descriptors/handles (nice-to-have)
+   - ✅ Add open_files: Option<usize> to ProcessInfo
+   - ✅ Use sysinfo open_files() API (returns None if unavailable)
+   - ✅ Test on macOS and Linux (works on both platforms)
+   - Returns null for privileged processes and kernel threads (expected)
 
 **v1.0.0 Release**:
-- [ ] 3+ platforms supported (macOS ✅, Linux ?, Windows ?)
+- [ ] 3+ platforms supported (macOS ✅, Linux ✅, Windows ?)
 - [ ] Published to crates.io
 - [ ] Field tested by 5+ users
 - [ ] Stable API documentation

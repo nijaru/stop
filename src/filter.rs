@@ -385,6 +385,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(expr.matches(&matching_process));
 
@@ -400,6 +401,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(!expr.matches(&partial_match_1));
 
@@ -415,6 +417,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(!expr.matches(&partial_match_2));
     }
@@ -435,6 +438,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(expr.matches(&match_cpu));
 
@@ -450,6 +454,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(expr.matches(&match_mem));
 
@@ -465,6 +470,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(expr.matches(&match_both));
 
@@ -480,6 +486,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(!expr.matches(&match_none));
     }
@@ -512,6 +519,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(expr.matches(&match_cpu));
 
@@ -527,6 +535,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(expr.matches(&match_and));
 
@@ -542,6 +551,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(!expr.matches(&no_match));
     }
@@ -562,6 +572,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(expr.matches(&process));
     }
@@ -599,6 +610,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(expr.matches(&chrome));
 
@@ -613,6 +625,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(expr.matches(&firefox));
 
@@ -627,6 +640,7 @@ mod tests {
             thread_count: 1,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            open_files: None,
         };
         assert!(!expr.matches(&other));
     }

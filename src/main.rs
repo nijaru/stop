@@ -62,6 +62,7 @@ pub struct ProcessInfo {
     pub thread_count: usize,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
+    pub open_files: Option<usize>,
 }
 
 pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
@@ -103,6 +104,7 @@ pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
                 thread_count: process.tasks().map(|t| t.len()).unwrap_or(1),
                 disk_read_bytes: disk_read,
                 disk_write_bytes: disk_write,
+                open_files: process.open_files(),
             }
         })
         .collect();
@@ -129,13 +131,14 @@ pub fn escape_csv_field(field: &str) -> String {
 }
 
 pub fn output_csv_header() {
-    println!("timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command,thread_count,disk_read_bytes,disk_write_bytes");
+    println!("timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command,thread_count,disk_read_bytes,disk_write_bytes,open_files");
 }
 
 pub fn output_csv_rows(snapshot: &SystemSnapshot) {
     for process in &snapshot.processes {
+        let open_files_str = process.open_files.map(|n| n.to_string()).unwrap_or_default();
         println!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             escape_csv_field(&snapshot.timestamp),
             snapshot.system.cpu_usage,
             snapshot.system.memory_total,
@@ -150,7 +153,8 @@ pub fn output_csv_rows(snapshot: &SystemSnapshot) {
             escape_csv_field(&process.command),
             process.thread_count,
             process.disk_read_bytes,
-            process.disk_write_bytes
+            process.disk_write_bytes,
+            open_files_str
         );
     }
 }
