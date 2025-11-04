@@ -60,6 +60,11 @@ stop --sort-by mem --top-n 10
 
 # Combined: filter, sort, limit
 stop --filter "mem >= 1" --sort-by cpu --top-n 5 --json
+
+# Watch mode (continuous monitoring)
+stop --watch                              # Updates every 2s (default)
+stop --watch --interval 1                 # Custom interval
+stop --watch --json | jq '.system.cpu_usage'  # NDJSON stream
 ```
 
 ## Filter Syntax
@@ -118,10 +123,16 @@ stop --filter "user == root"
 - `--top-n` flag to show top N processes
 - Default: 20 processes
 
+**Watch Mode:**
+- Continuous monitoring with `--watch` flag
+- Configurable interval with `--interval` (default: 2s)
+- NDJSON output for JSON mode (stream-friendly)
+- Screen clearing for human-readable mode
+- Works with all filters, sorting, and output modes
+
 ### 🚧 Planned
 
 - Multiple filter conditions (AND/OR logic)
-- Watch mode (continuous updates)
 - Disk I/O metrics
 - Network metrics
 - Thread information

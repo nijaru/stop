@@ -1,4 +1,5 @@
 mod filter;
+mod watch;
 
 use clap::Parser;
 use filter::Filter;
@@ -7,43 +8,46 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use sysinfo::System;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(name = "stop")]
 #[command(about = "Structured process and system monitoring with JSON output")]
 #[command(version)]
-struct Args {
+pub struct Args {
     #[arg(long, help = "Output as JSON")]
-    json: bool,
+    pub json: bool,
 
     #[arg(long, help = "Output as CSV")]
-    csv: bool,
+    pub csv: bool,
 
     #[arg(long, help = "Filter processes (e.g., 'cpu > 10')")]
-    filter: Option<String>,
+    pub filter: Option<String>,
 
     #[arg(long, help = "Sort by metric (cpu, mem, pid, name)")]
-    sort_by: Option<String>,
+    pub sort_by: Option<String>,
 
     #[arg(long, help = "Show top N processes")]
-    top_n: Option<usize>,
+    pub top_n: Option<usize>,
 
     #[arg(long, help = "Watch mode (continuous updates)")]
-    watch: bool,
+    pub watch: bool,
+
+    #[arg(long, help = "Update interval in seconds for watch mode", default_value_t = 2.0)]
+    pub interval: f64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct SystemSnapshot {
-    timestamp: String,
-    system: SystemMetrics,
-    processes: Vec<ProcessInfo>,
+pub struct SystemSnapshot {
+    pub timestamp: String,
+    pub system: SystemMetrics,
+    pub processes: Vec<ProcessInfo>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct SystemMetrics {
-    cpu_usage: f32,
-    memory_total: u64,
-    memory_used: u64,
-    memory_percent: f32,
+pub struct SystemMetrics {
+    pub cpu_usage: f32,
+    pub memory_total: u64,
+    pub memory_used: u64,
+    pub memory_percent: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -57,7 +61,7 @@ pub struct ProcessInfo {
     pub command: String,
 }
 
-fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
+pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
     let mut sys = System::new_all();
 
     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -106,7 +110,7 @@ fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
     })
 }
 
-fn escape_csv_field(field: &str) -> String {
+pub fn escape_csv_field(field: &str) -> String {
     // RFC 4180: If field contains comma, quote, or newline, wrap in quotes and escape quotes
     if field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r') {
         format!("\"{}\"", field.replace('"', "\"\""))
@@ -115,13 +119,11 @@ fn escape_csv_field(field: &str) -> String {
     }
 }
 
-fn output_csv(snapshot: &SystemSnapshot) {
-    // Header row
-    println!(
-        "timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command"
-    );
+pub fn output_csv_header() {
+    println!("timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command");
+}
 
-    // System + process rows
+pub fn output_csv_rows(snapshot: &SystemSnapshot) {
     for process in &snapshot.processes {
         println!(
             "{},{},{},{},{},{},{},{},{},{},{},{}",
@@ -141,7 +143,12 @@ fn output_csv(snapshot: &SystemSnapshot) {
     }
 }
 
-fn sort_processes(processes: &mut [ProcessInfo], sort_by: &str) {
+fn output_csv(snapshot: &SystemSnapshot) {
+    output_csv_header();
+    output_csv_rows(snapshot);
+}
+
+pub fn sort_processes(processes: &mut [ProcessInfo], sort_by: &str) {
     match sort_by.to_lowercase().as_str() {
         "cpu" => processes.sort_by(|a, b| {
             b.cpu_percent
@@ -169,9 +176,120 @@ fn sort_processes(processes: &mut [ProcessInfo], sort_by: &str) {
     }
 }
 
+pub fn output_human_readable(
+    snapshot: &SystemSnapshot,
+    filter_expr: Option<&String>,
+    sort_by: &str,
+    limit: usize,
+) {
+    println!(
+        "{} {}",
+        "stop".bold().cyan(),
+        format!("v{}", env!("CARGO_PKG_VERSION")).dimmed()
+    );
+    println!();
+    println!("{}", "System:".bold());
+
+    // Color code CPU based on usage
+    let cpu_value = snapshot.system.cpu_usage;
+    let cpu_display = if cpu_value > 80.0 {
+        format!("{:.1}%", cpu_value).red().to_string()
+    } else if cpu_value > 50.0 {
+        format!("{:.1}%", cpu_value).yellow().to_string()
+    } else {
+        format!("{:.1}%", cpu_value).green().to_string()
+    };
+    println!("  CPU: {}", cpu_display);
+
+    // Color code memory based on usage
+    let mem_value = snapshot.system.memory_percent;
+    let mem_str = format!(
+        "{:.1}% ({} / {} MB)",
+        mem_value,
+        snapshot.system.memory_used / 1024 / 1024,
+        snapshot.system.memory_total / 1024 / 1024
+    );
+    let mem_display = if mem_value > 80.0 {
+        mem_str.red().to_string()
+    } else if mem_value > 60.0 {
+        mem_str.yellow().to_string()
+    } else {
+        mem_str.green().to_string()
+    };
+    println!("  Memory: {}", mem_display);
+    println!();
+
+    if let Some(filter) = filter_expr {
+        println!("{} {}", "Filter:".bold(), filter.cyan());
+    }
+    println!(
+        "{} {} | {} {} {}",
+        "Sort:".bold(),
+        sort_by.yellow(),
+        "Showing:".bold(),
+        snapshot.processes.len().min(limit).to_string().green(),
+        "processes".dimmed()
+    );
+    println!();
+
+    println!(
+        "{:<8} {:<20} {:>8} {:>8} {:<10}",
+        "PID".bold(),
+        "NAME".bold(),
+        "CPU%".bold(),
+        "MEM%".bold(),
+        "USER".bold()
+    );
+    println!("{}", "─".repeat(70).dimmed());
+
+    for process in &snapshot.processes {
+        // Color code CPU usage
+        let cpu_str = format!("{:>7.1}%", process.cpu_percent);
+        let cpu_display = if process.cpu_percent > 50.0 {
+            cpu_str.red().to_string()
+        } else if process.cpu_percent > 20.0 {
+            cpu_str.yellow().to_string()
+        } else {
+            cpu_str.to_string()
+        };
+
+        // Color code memory usage
+        let mem_str = format!("{:>7.1}%", process.memory_percent);
+        let mem_display = if process.memory_percent > 5.0 {
+            mem_str.red().to_string()
+        } else if process.memory_percent > 2.0 {
+            mem_str.yellow().to_string()
+        } else {
+            mem_str.to_string()
+        };
+
+        let user_str = &process.user[..process.user.len().min(10)];
+        let user_display = user_str.dimmed();
+        println!(
+            "{:<8} {:<20} {} {} {:<10}",
+            process.pid.to_string().cyan(),
+            &process.name[..process.name.len().min(20)],
+            cpu_display,
+            mem_display,
+            user_display
+        );
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
+    // Validate interval
+    if args.interval < 0.2 {
+        eprintln!("Warning: Interval below 0.2s may cause high CPU usage");
+    }
+
+    // Watch mode
+    if args.watch {
+        return watch::watch_mode(&args);
+    }
+
+    // Single snapshot mode
     let mut snapshot = collect_snapshot()?;
 
     // Parse filter if provided
@@ -216,98 +334,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else if args.csv {
         output_csv(&snapshot);
     } else {
-        println!(
-            "{} {}",
-            "stop".bold().cyan(),
-            format!("v{}", env!("CARGO_PKG_VERSION")).dimmed()
-        );
-        println!();
-        println!("{}", "System:".bold());
-
-        // Color code CPU based on usage
-        let cpu_value = snapshot.system.cpu_usage;
-        let cpu_display = if cpu_value > 80.0 {
-            format!("{:.1}%", cpu_value).red().to_string()
-        } else if cpu_value > 50.0 {
-            format!("{:.1}%", cpu_value).yellow().to_string()
-        } else {
-            format!("{:.1}%", cpu_value).green().to_string()
-        };
-        println!("  CPU: {}", cpu_display);
-
-        // Color code memory based on usage
-        let mem_value = snapshot.system.memory_percent;
-        let mem_str = format!(
-            "{:.1}% ({} / {} MB)",
-            mem_value,
-            snapshot.system.memory_used / 1024 / 1024,
-            snapshot.system.memory_total / 1024 / 1024
-        );
-        let mem_display = if mem_value > 80.0 {
-            mem_str.red().to_string()
-        } else if mem_value > 60.0 {
-            mem_str.yellow().to_string()
-        } else {
-            mem_str.green().to_string()
-        };
-        println!("  Memory: {}", mem_display);
-        println!();
-
-        if let Some(filter_expr) = &args.filter {
-            println!("{} {}", "Filter:".bold(), filter_expr.cyan());
-        }
-        println!(
-            "{} {} | {} {} {}",
-            "Sort:".bold(),
-            sort_by.yellow(),
-            "Showing:".bold(),
-            snapshot.processes.len().min(limit).to_string().green(),
-            "processes".dimmed()
-        );
-        println!();
-
-        println!(
-            "{:<8} {:<20} {:>8} {:>8} {:<10}",
-            "PID".bold(),
-            "NAME".bold(),
-            "CPU%".bold(),
-            "MEM%".bold(),
-            "USER".bold()
-        );
-        println!("{}", "─".repeat(70).dimmed());
-
-        for process in &snapshot.processes {
-            // Color code CPU usage
-            let cpu_str = format!("{:>7.1}%", process.cpu_percent);
-            let cpu_display = if process.cpu_percent > 50.0 {
-                cpu_str.red().to_string()
-            } else if process.cpu_percent > 20.0 {
-                cpu_str.yellow().to_string()
-            } else {
-                cpu_str.to_string()
-            };
-
-            // Color code memory usage
-            let mem_str = format!("{:>7.1}%", process.memory_percent);
-            let mem_display = if process.memory_percent > 5.0 {
-                mem_str.red().to_string()
-            } else if process.memory_percent > 2.0 {
-                mem_str.yellow().to_string()
-            } else {
-                mem_str.to_string()
-            };
-
-            let user_str = &process.user[..process.user.len().min(10)];
-            let user_display = user_str.dimmed();
-            println!(
-                "{:<8} {:<20} {} {} {:<10}",
-                process.pid.to_string().cyan(),
-                &process.name[..process.name.len().min(20)],
-                cpu_display,
-                mem_display,
-                user_display
-            );
-        }
+        output_human_readable(&snapshot, args.filter.as_ref(), sort_by, limit);
     }
 
     Ok(())

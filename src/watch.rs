@@ -1,0 +1,74 @@
+use crate::{collect_snapshot, filter::Filter, output_csv_header, output_csv_rows, output_human_readable, sort_processes, Args};
+use crossterm::{cursor, terminal, ExecutableCommand};
+use std::error::Error;
+use std::io::{stdout, Write};
+use std::time::Duration;
+
+pub fn watch_mode(args: &Args) -> Result<(), Box<dyn Error>> {
+    let mut first_iteration = true;
+
+    loop {
+        let mut snapshot = collect_snapshot()?;
+
+        // Parse filter if provided
+        let filter = if let Some(filter_expr) = &args.filter {
+            match Filter::parse(filter_expr) {
+                Ok(f) => Some(f),
+                Err(e) => {
+                    if args.json {
+                        let error_json = serde_json::json!({
+                            "error": "FilterError",
+                            "message": e.to_string(),
+                            "expression": filter_expr,
+                        });
+                        println!("{}", serde_json::to_string(&error_json)?);
+                    } else {
+                        eprintln!("Error: {}", e);
+                        eprintln!("Expression: {}", filter_expr);
+                    }
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            None
+        };
+
+        // Apply filter
+        if let Some(ref f) = filter {
+            snapshot.processes.retain(|p| f.matches(p));
+        }
+
+        // Apply sorting
+        let sort_by = args.sort_by.as_deref().unwrap_or("cpu");
+        sort_processes(&mut snapshot.processes, sort_by);
+
+        // Apply top-n limit
+        let limit = args.top_n.unwrap_or(20);
+        snapshot.processes.truncate(limit);
+
+        // Output based on mode
+        if args.json {
+            // NDJSON: one JSON object per line
+            println!("{}", serde_json::to_string(&snapshot)?);
+            stdout().flush()?;
+        } else if args.csv {
+            // CSV: header once, then rows
+            if first_iteration {
+                output_csv_header();
+                first_iteration = false;
+            }
+            output_csv_rows(&snapshot);
+            stdout().flush()?;
+        } else {
+            // Human-readable: clear screen and redraw
+            stdout()
+                .execute(terminal::Clear(terminal::ClearType::All))?
+                .execute(cursor::MoveTo(0, 0))?;
+            output_human_readable(&snapshot, args.filter.as_ref(), sort_by, limit);
+            stdout().flush()?;
+        }
+
+        // Sleep before next iteration
+        std::thread::sleep(Duration::from_secs_f64(args.interval));
+    }
+}

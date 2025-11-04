@@ -18,6 +18,11 @@
 **Decision**: Hand-rolled parser (simple regex split) - no need for pest/nom complexity
 → Details: ai/research/filter-syntax.md
 
+## Watch Mode Implementation (2025-11-04)
+**Sources**: Real-Time System Monitor in Rust Terminal, watchexec patterns
+**Key Finding**: 2s default interval provides best balance of responsiveness and CPU efficiency
+**Decision**: NDJSON for JSON watch mode, screen clearing for human-readable
+→ Details: ai/research/watch-mode.md
+
 ## Open Questions
-- [ ] Watch mode CPU overhead testing (1s vs 2s refresh rate)
 - [ ] CSV vs TSV for command field escaping

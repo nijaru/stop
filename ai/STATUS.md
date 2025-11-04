@@ -22,6 +22,10 @@
 - ✅ JSON output (`--json` flag)
 - ✅ CSV output (`--csv` flag) - RFC 4180 compliant
 - ✅ Human-readable table with colors and system summary
+- ✅ Watch mode (`--watch` flag) - continuous updates with configurable interval
+  - NDJSON for JSON mode (stream-friendly)
+  - Screen clearing for human-readable mode
+  - Default 2s interval, configurable with `--interval`
 
 **Code Quality:**
 - ✅ 21 tests (8 unit + 13 integration), all passing
@@ -32,7 +36,6 @@
 
 ## What Doesn't Work Yet
 
-- ❌ `--watch` flag (parsed but not implemented)
 - ❌ Multiple filter conditions (AND/OR logic)
 - ❌ Disk I/O metrics
 - ❌ Network metrics
