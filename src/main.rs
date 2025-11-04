@@ -2,6 +2,7 @@ mod filter;
 
 use clap::Parser;
 use filter::Filter;
+use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use sysinfo::System;
@@ -13,6 +14,9 @@ use sysinfo::System;
 struct Args {
     #[arg(long, help = "Output as JSON")]
     json: bool,
+
+    #[arg(long, help = "Output as CSV")]
+    csv: bool,
 
     #[arg(long, help = "Filter processes (e.g., 'cpu > 10')")]
     filter: Option<String>,
@@ -102,6 +106,41 @@ fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
     })
 }
 
+fn escape_csv_field(field: &str) -> String {
+    // RFC 4180: If field contains comma, quote, or newline, wrap in quotes and escape quotes
+    if field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r') {
+        format!("\"{}\"", field.replace('"', "\"\""))
+    } else {
+        field.to_string()
+    }
+}
+
+fn output_csv(snapshot: &SystemSnapshot) {
+    // Header row
+    println!(
+        "timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command"
+    );
+
+    // System + process rows
+    for process in &snapshot.processes {
+        println!(
+            "{},{},{},{},{},{},{},{},{},{},{},{}",
+            escape_csv_field(&snapshot.timestamp),
+            snapshot.system.cpu_usage,
+            snapshot.system.memory_total,
+            snapshot.system.memory_used,
+            snapshot.system.memory_percent,
+            process.pid,
+            escape_csv_field(&process.name),
+            process.cpu_percent,
+            process.memory_bytes,
+            process.memory_percent,
+            escape_csv_field(&process.user),
+            escape_csv_field(&process.command)
+        );
+    }
+}
+
 fn sort_processes(processes: &mut [ProcessInfo], sort_by: &str) {
     match sort_by.to_lowercase().as_str() {
         "cpu" => processes.sort_by(|a, b| {
@@ -174,43 +213,99 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&snapshot)?);
+    } else if args.csv {
+        output_csv(&snapshot);
     } else {
-        println!("stop v{}", env!("CARGO_PKG_VERSION"));
-        println!();
-        println!("System:");
-        println!("  CPU: {:.1}%", snapshot.system.cpu_usage);
         println!(
-            "  Memory: {:.1}% ({} / {} MB)",
-            snapshot.system.memory_percent,
+            "{} {}",
+            "stop".bold().cyan(),
+            format!("v{}", env!("CARGO_PKG_VERSION")).dimmed()
+        );
+        println!();
+        println!("{}", "System:".bold());
+
+        // Color code CPU based on usage
+        let cpu_value = snapshot.system.cpu_usage;
+        let cpu_display = if cpu_value > 80.0 {
+            format!("{:.1}%", cpu_value).red().to_string()
+        } else if cpu_value > 50.0 {
+            format!("{:.1}%", cpu_value).yellow().to_string()
+        } else {
+            format!("{:.1}%", cpu_value).green().to_string()
+        };
+        println!("  CPU: {}", cpu_display);
+
+        // Color code memory based on usage
+        let mem_value = snapshot.system.memory_percent;
+        let mem_str = format!(
+            "{:.1}% ({} / {} MB)",
+            mem_value,
             snapshot.system.memory_used / 1024 / 1024,
             snapshot.system.memory_total / 1024 / 1024
         );
+        let mem_display = if mem_value > 80.0 {
+            mem_str.red().to_string()
+        } else if mem_value > 60.0 {
+            mem_str.yellow().to_string()
+        } else {
+            mem_str.green().to_string()
+        };
+        println!("  Memory: {}", mem_display);
         println!();
 
         if let Some(filter_expr) = &args.filter {
-            println!("Filter: {}", filter_expr);
+            println!("{} {}", "Filter:".bold(), filter_expr.cyan());
         }
         println!(
-            "Sort: {} | Showing: {} processes",
-            sort_by,
-            snapshot.processes.len().min(limit)
+            "{} {} | {} {} {}",
+            "Sort:".bold(),
+            sort_by.yellow(),
+            "Showing:".bold(),
+            snapshot.processes.len().min(limit).to_string().green(),
+            "processes".dimmed()
         );
         println!();
 
         println!(
             "{:<8} {:<20} {:>8} {:>8} {:<10}",
-            "PID", "NAME", "CPU%", "MEM%", "USER"
+            "PID".bold(),
+            "NAME".bold(),
+            "CPU%".bold(),
+            "MEM%".bold(),
+            "USER".bold()
         );
-        println!("{}", "-".repeat(70));
+        println!("{}", "─".repeat(70).dimmed());
 
         for process in &snapshot.processes {
+            // Color code CPU usage
+            let cpu_str = format!("{:>7.1}%", process.cpu_percent);
+            let cpu_display = if process.cpu_percent > 50.0 {
+                cpu_str.red().to_string()
+            } else if process.cpu_percent > 20.0 {
+                cpu_str.yellow().to_string()
+            } else {
+                cpu_str.to_string()
+            };
+
+            // Color code memory usage
+            let mem_str = format!("{:>7.1}%", process.memory_percent);
+            let mem_display = if process.memory_percent > 5.0 {
+                mem_str.red().to_string()
+            } else if process.memory_percent > 2.0 {
+                mem_str.yellow().to_string()
+            } else {
+                mem_str.to_string()
+            };
+
+            let user_str = &process.user[..process.user.len().min(10)];
+            let user_display = user_str.dimmed();
             println!(
-                "{:<8} {:<20} {:>7.1}% {:>7.1}% {:<10}",
-                process.pid,
+                "{:<8} {:<20} {} {} {:<10}",
+                process.pid.to_string().cyan(),
                 &process.name[..process.name.len().min(20)],
-                process.cpu_percent,
-                process.memory_percent,
-                &process.user[..process.user.len().min(10)]
+                cpu_display,
+                mem_display,
+                user_display
             );
         }
     }

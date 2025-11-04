@@ -2,47 +2,53 @@
 
 ## Current State
 
-**Version**: v0.0.1 (working toward v0.1.0)
-**Phase**: 1 (MVP → v0.1.0) - Core functionality complete
+**Version**: v0.0.1
+**Phase**: 1 - Core features complete
 **Last Updated**: 2025-11-04
 
 ## What Works
 
-- ✅ Basic process listing with system metrics
-- ✅ JSON output (`--json` flag)
-- ✅ Human-readable table output with summary info
-- ✅ CLI argument parsing (clap)
-- ✅ Cross-platform data collection (sysinfo)
-- ✅ **Filter functionality** (`--filter` flag)
+**Core Features:**
+- ✅ Process listing with system metrics
+- ✅ Filter functionality (`--filter` flag)
   - Simple `field op value` syntax
   - Fields: cpu, mem, pid, name, user
   - Operators: >, >=, <, <=, ==, !=
   - AI-friendly JSON error messages
-- ✅ **Sorting** (`--sort-by` flag: cpu, mem, pid, name)
-- ✅ **Top-N limiting** (`--top-n` flag)
-- ✅ **Unit tests** (8 tests, all passing)
-- ✅ **Zero clippy warnings**
+- ✅ Sorting (`--sort-by` flag: cpu, mem, pid, name)
+- ✅ Top-N limiting (`--top-n` flag, default 20)
+
+**Output Modes:**
+- ✅ JSON output (`--json` flag)
+- ✅ CSV output (`--csv` flag) - RFC 4180 compliant
+- ✅ Human-readable table with colors and system summary
+
+**Code Quality:**
+- ✅ 21 tests (8 unit + 13 integration), all passing
+- ✅ Zero clippy warnings
 - ✅ Proper error handling with thiserror
-- ✅ Type-safe filter module with comprehensive validation
+- ✅ Type-safe filter module with parse-time validation
+- ✅ Cross-platform data collection (sysinfo)
 
 ## What Doesn't Work Yet
 
 - ❌ `--watch` flag (parsed but not implemented)
-- ❌ CSV output mode
 - ❌ Multiple filter conditions (AND/OR logic)
 - ❌ Disk I/O metrics
 - ❌ Network metrics
-- ❌ Integration tests
+- ❌ Thread information
 
 ## Recent Changes
 
-**Phase 1 core features (2025-11-04)**:
+**Phase 1 complete (2025-11-04)**:
 - ✅ Implemented filter module with type-safe parsing and evaluation
 - ✅ Added thiserror for proper error handling
 - ✅ Implemented sort-by functionality (cpu, mem, pid, name)
-- ✅ Implemented top-n limiting (works for both JSON and human output)
-- ✅ Added 8 unit tests covering filter parsing edge cases
-- ✅ AI-friendly JSON error messages for invalid filters
+- ✅ Implemented top-n limiting (works for all output modes)
+- ✅ Added CSV output with RFC 4180 escaping
+- ✅ Color-coded human-readable output (owo-colors)
+- ✅ 21 comprehensive tests (8 unit + 13 integration)
+- ✅ Updated README with examples and filter syntax docs
 - ✅ Zero clippy warnings, all tests passing
 
 **Initial implementation (bd0d51c)**:
@@ -54,11 +60,12 @@
 
 ## Next Steps
 
-Remaining for Phase 1 completion (v0.1.0):
-1. Integration tests (CLI end-to-end)
-2. CSV output mode
-3. Human-readable output improvements (colors, better formatting)
-4. Documentation updates (README examples, filter syntax docs)
+**Phase 2 priorities:**
+1. Watch mode implementation (`--watch` flag)
+2. Multiple filter conditions (AND/OR logic)
+3. Performance benchmarks and optimization
+4. Cross-platform testing (Linux, Windows)
+5. Consider bumping to v0.1.0 after field testing
 
 ## Known Issues
 

@@ -21,9 +21,12 @@ Traditional monitoring tools are designed for humans:
 
 ## Status
 
-🚧 **Early Development** - v0.0.1
+**v0.0.1** - Core functionality complete
 
-Basic structure in place. Core functionality in development.
+✅ Filter, sort, limit processes
+✅ JSON/CSV/human-readable output
+✅ 21 tests passing
+✅ Zero clippy warnings
 
 ## Installation
 
@@ -40,46 +43,89 @@ stop --version
 ## Quick Start
 
 ```bash
-# Basic system snapshot (JSON)
-stop --json
-
-# Human-readable output (default)
+# Human-readable output with colors (default)
 stop
 
+# JSON output
+stop --json
+
+# CSV output
+stop --csv
+
 # Filter high CPU processes
-stop --filter "cpu > 10" --json
+stop --filter "cpu > 10"
 
 # Top 10 processes by memory
-stop --top-n 10 --sort-by mem
+stop --sort-by mem --top-n 10
 
-# Continuous monitoring (1s refresh)
-stop --watch --json
+# Combined: filter, sort, limit
+stop --filter "mem >= 1" --sort-by cpu --top-n 5 --json
 ```
 
-## Planned Features
+## Filter Syntax
 
-### Core Monitoring
-- Process list (PID, name, CPU%, memory%, user, command)
-- System metrics (CPU, memory, disk I/O, network)
+Simple `field op value` expressions:
+
+**Fields:**
+- `cpu` - CPU percentage (float)
+- `mem` - Memory percentage (float)
+- `pid` - Process ID (integer)
+- `name` - Process name (case-insensitive contains)
+- `user` - User name/ID (exact match)
+
+**Operators:**
+- `>`, `>=`, `<`, `<=` - Numeric comparisons
+- `==`, `!=` - Equality (works with all fields)
+
+**Examples:**
+```bash
+# High CPU processes
+stop --filter "cpu > 50"
+
+# Memory hogs
+stop --filter "mem >= 5.0"
+
+# System processes (low PIDs)
+stop --filter "pid < 1000"
+
+# Find Chrome processes
+stop --filter "name == chrome"
+
+# Processes by specific user
+stop --filter "user == root"
+```
+
+## Features
+
+### ✅ Implemented (v0.0.1)
+
+**Output Modes:**
+- JSON - Structured data for AI agents
+- CSV - RFC 4180 compliant with proper escaping
+- Human-readable - Color-coded table with system summary
+
+**Filtering:**
+- Simple `field op value` syntax
+- Fields: cpu, mem, pid, name, user
+- Operators: `>`, `>=`, `<`, `<=`, `==`, `!=`
+- AI-friendly JSON error messages
+
+**Sorting:**
+- Sort by: cpu, mem, pid, name
+- Default: CPU descending
+
+**Limiting:**
+- `--top-n` flag to show top N processes
+- Default: 20 processes
+
+### 🚧 Planned
+
+- Multiple filter conditions (AND/OR logic)
+- Watch mode (continuous updates)
+- Disk I/O metrics
+- Network metrics
 - Thread information
-- Open files/connections
-
-### Query & Filter
-- Filter by CPU/memory thresholds
-- Sort by any metric
-- Limit output (top N processes)
-- Process name/user filtering
-
-### Output Modes
-- JSON (default for `--json` flag)
-- Human-readable table
-- CSV output
-- Continuous watch mode
-
-### Cross-Platform
-- macOS (primary)
-- Linux
-- Windows (if feasible)
+- Windows support
 
 ## Example Output
 
@@ -157,11 +203,12 @@ fi
 ## Development
 
 ```bash
-# Run tests
+# Run tests (21 tests: 8 unit + 13 integration)
 cargo test
 
-# Run with debug logging
-RUST_LOG=debug cargo run
+# Check code quality
+cargo clippy
+cargo fmt
 
 # Build release
 cargo build --release
@@ -170,39 +217,36 @@ cargo build --release
 cargo install --path .
 ```
 
-## Implementation Roadmap
+## Implementation Details
 
-### Phase 1: MVP (v0.1.0)
-- [ ] Basic process list (PID, name, CPU%, memory%)
-- [ ] System metrics (CPU, memory)
-- [ ] JSON output
-- [ ] Human-readable table output
-- [ ] Basic filtering (--filter flag)
-- [ ] Sorting (--sort-by flag)
+**Tech Stack:**
+- Rust 2024 edition
+- sysinfo 0.37 - Cross-platform system metrics
+- clap 4.5 - CLI parsing
+- thiserror 2.0 - Structured error handling
+- owo-colors 4.1 - Terminal colors
 
-### Phase 2: Query & Filter (v0.2.0)
-- [ ] Top N processes (--top-n)
-- [ ] Multiple filter conditions
-- [ ] Process name/user filtering
-- [ ] CSV output
+**Architecture:**
+- Type-safe filter module with comprehensive validation
+- Parse-time error checking (not eval-time)
+- Zero-copy processing where possible
+- Minimal allocations in hot paths
 
-### Phase 3: Advanced Monitoring (v0.3.0)
-- [ ] Disk I/O metrics
-- [ ] Network metrics
-- [ ] Thread information
-- [ ] Open files/connections
+**Testing:**
+- 8 unit tests (filter parsing, edge cases)
+- 13 integration tests (CLI, output formats, errors)
+- All tests passing, zero clippy warnings
 
-### Phase 4: Polish (v0.4.0)
-- [ ] Watch mode (--watch)
-- [ ] Cross-platform testing
-- [ ] Performance optimization
-- [ ] Comprehensive documentation
+## Roadmap
 
-### Phase 5: Production (v1.0.0)
-- [ ] Stable API
-- [ ] Full test coverage
-- [ ] Windows support
-- [ ] Published to crates.io
+See `ai/PLAN.md` for detailed 5-phase roadmap.
+
+**Next up:**
+- Watch mode (continuous monitoring)
+- Multiple filter conditions (AND/OR)
+- Disk I/O and network metrics
+- Windows support
+- Publish to crates.io
 
 ## Contributing
 
