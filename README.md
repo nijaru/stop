@@ -21,13 +21,15 @@ Traditional monitoring tools are designed for humans:
 
 ## Status
 
-**v0.0.1** - Core functionality complete
+**v0.0.1** - Phases 1-4 complete
 
 ✅ Filter, sort, limit processes (with AND/OR logic)
 ✅ JSON/CSV/human-readable output
-✅ 29 tests passing (16 unit + 13 integration)
+✅ Advanced metrics: thread count, disk I/O, open file descriptors
+✅ 50 tests passing (16 unit + 19 edge case + 15 integration)
 ✅ Zero clippy warnings
 ✅ Tested on macOS and Linux (Fedora)
+✅ Performance optimized (86% allocation reduction in watch mode)
 
 ## Installation
 
@@ -158,29 +160,30 @@ stop --filter "cpu > 50 and mem > 10 or name == chrome"
 - NDJSON output for JSON mode (stream-friendly)
 - Screen clearing for human-readable mode
 - Works with all filters, sorting, and output modes
+- Graceful broken pipe handling (e.g., piping to `head`)
+
+**Advanced Metrics (Phase 3):**
+- Thread count per process
+- Disk I/O (read/write bytes) per process
+- Open file descriptors per process (when available)
 
 ### 🚧 Planned
 
-- Disk I/O metrics
-- Network metrics
-- Thread information
+- Per-process network metrics (sysinfo doesn't support yet)
 - Windows support
 - Parentheses for complex filter grouping
+- Publish to crates.io
 
 ## Example Output
 
 ```json
 {
-  "timestamp": "2025-01-04T12:34:56Z",
+  "timestamp": "2025-11-05T00:23:56.037549+00:00",
   "system": {
-    "cpu_usage": 45.2,
+    "cpu_usage": 6.5,
     "memory_total": 137438953472,
-    "memory_used": 89478485332,
-    "memory_percent": 65.1,
-    "disk_read_bytes": 12345678,
-    "disk_write_bytes": 87654321,
-    "network_rx_bytes": 9876543210,
-    "network_tx_bytes": 1234567890
+    "memory_used": 73425764352,
+    "memory_percent": 53.4
   },
   "processes": [
     {
@@ -189,8 +192,12 @@ stop --filter "cpu > 50 and mem > 10 or name == chrome"
       "cpu_percent": 12.5,
       "memory_bytes": 2147483648,
       "memory_percent": 1.6,
-      "user": "nick",
-      "command": "/Applications/Chrome.app/Contents/MacOS/Chrome"
+      "user": "501",
+      "command": "/Applications/Chrome.app/Contents/MacOS/Chrome",
+      "thread_count": 15,
+      "disk_read_bytes": 12345678,
+      "disk_write_bytes": 8765432,
+      "open_files": 120
     }
   ]
 }
@@ -221,6 +228,87 @@ if [ $(stop --json | jq '.system.memory_percent') -gt 80 ]; then
 fi
 ```
 
+## Practical Examples
+
+### Monitoring Specific Applications
+
+```bash
+# Watch Chrome memory usage in real-time
+stop --watch --filter "name == chrome" --sort-by mem
+
+# Find all Electron apps (VS Code, Slack, etc.)
+stop --filter "name == electron" --json | jq '.processes[].name'
+
+# Monitor Docker containers
+stop --filter "name == docker" --top-n 20
+```
+
+### Resource Analysis
+
+```bash
+# Find memory leaks (processes with high memory, many open files)
+stop --filter "mem > 5" --sort-by mem --json | \
+  jq '.processes[] | select(.open_files > 100) | {name, memory_percent, open_files}'
+
+# Identify I/O-heavy processes
+stop --json | jq '.processes | sort_by(.disk_write_bytes) | reverse | .[:5]'
+
+# Find multi-threaded processes
+stop --json | jq '.processes | sort_by(.thread_count) | reverse | .[:10]'
+```
+
+### System Health Checks
+
+```bash
+# Quick system overview
+stop --top-n 5
+
+# Export system state for analysis
+stop --json > system-snapshot-$(date +%Y%m%d-%H%M%S).json
+
+# Monitor system during load test
+stop --watch --interval 1 --json | tee load-test-metrics.jsonl
+
+# Check if specific service is running
+stop --filter "name == nginx" --json | jq -e '.processes | length > 0' && \
+  echo "nginx is running" || echo "nginx is NOT running"
+```
+
+### Performance Debugging
+
+```bash
+# Find processes causing high CPU during investigation
+stop --watch --filter "cpu > 10" --interval 0.5
+
+# Compare disk I/O before and after optimization
+stop --filter "name == myapp" --json | jq '.processes[].disk_write_bytes'
+
+# Monitor resource usage with CSV for spreadsheet analysis
+stop --watch --csv --interval 5 > metrics.csv
+# Analyze in Excel/Google Sheets later
+```
+
+### Automation & Alerting
+
+```bash
+# Alert on resource spikes (monitoring script)
+while true; do
+  CPU=$(stop --json | jq '.system.cpu_usage')
+  if (( $(echo "$CPU > 90" | bc -l) )); then
+    echo "ALERT: CPU at ${CPU}%" | mail -s "High CPU" admin@example.com
+  fi
+  sleep 60
+done
+
+# Log top 10 processes every hour (cron job)
+0 * * * * /usr/local/bin/stop --top-n 10 --json >> /var/log/process-metrics.jsonl
+
+# Kill runaway processes automatically
+stop --filter "cpu > 80 and name == myapp" --json | \
+  jq -r '.processes[].pid' | \
+  xargs -I {} sh -c 'echo "Killing PID {}"; kill {}'
+```
+
 ## Design Goals
 
 1. **Structured Output** - JSON by default for AI/automation
@@ -243,7 +331,7 @@ fi
 ## Development
 
 ```bash
-# Run tests (29 tests: 16 unit + 13 integration)
+# Run tests (50 tests: 16 unit + 19 edge case + 15 integration)
 cargo test
 
 # Check code quality
@@ -274,25 +362,33 @@ cargo install --path .
 
 **Testing:**
 - 16 unit tests (filter parsing, compound expressions, edge cases)
-- 13 integration tests (CLI, output formats, errors)
-- All tests passing, zero clippy warnings
+- 19 edge case tests (unicode, special chars, error conditions)
+- 15 integration tests (CLI, output formats, Phase 3 features)
+- All 50 tests passing, zero clippy warnings
+- Performance profiled: 29ms overhead, 86% allocation reduction in watch mode
 
 ## Known Limitations
 
 - **User field**: Shows UIDs (e.g., "501", "1000") instead of usernames on both macOS and Linux - sysinfo crate limitation
+- **Open files**: Returns `null` for privileged processes and kernel threads (expected behavior)
+- **Network metrics**: Per-process network metrics not available - sysinfo crate limitation
 - **Collection time**: Includes mandatory 200ms sleep for accurate CPU readings
 - **Windows**: Not yet tested (planned)
 
 ## Roadmap
 
-See `ai/PLAN.md` for detailed 5-phase roadmap.
+See `ai/PLAN.md` for detailed roadmap.
+
+**Completed (v0.0.1):**
+- ✅ Phases 1-4: Filter, sort, watch, CSV output, advanced metrics
+- ✅ Thread count, disk I/O, open file descriptors
+- ✅ Comprehensive testing and optimization
 
 **Next up:**
-- Disk I/O and network metrics
-- Thread information
+- Field testing and real-world validation
 - Windows support
 - Parentheses for complex filter grouping
-- Publish to crates.io
+- Publish to crates.io (after field testing)
 
 ## Contributing
 
