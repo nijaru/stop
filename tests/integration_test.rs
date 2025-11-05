@@ -200,3 +200,60 @@ fn test_human_readable_output() {
         .stdout(predicate::str::contains("CPU:"))
         .stdout(predicate::str::contains("Memory:"));
 }
+
+#[test]
+fn test_phase3_features_in_json() {
+    let mut cmd = Command::cargo_bin("stop").unwrap();
+    let output = cmd.arg("--json").arg("--top-n").arg("1").assert().success();
+
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&stdout).expect("Valid JSON output");
+
+    // Ensure at least one process exists
+    let processes = json["processes"].as_array().unwrap();
+    assert!(!processes.is_empty(), "Expected at least one process");
+
+    let process = &processes[0];
+
+    // Check Phase 3 features exist
+    assert!(process.get("thread_count").is_some(), "Missing thread_count field");
+    assert!(process.get("disk_read_bytes").is_some(), "Missing disk_read_bytes field");
+    assert!(process.get("disk_write_bytes").is_some(), "Missing disk_write_bytes field");
+    assert!(process.get("open_files").is_some(), "Missing open_files field");
+
+    // Verify types and reasonable values
+    assert!(process["thread_count"].is_number(), "thread_count should be a number");
+    assert!(process["thread_count"].as_u64().unwrap() > 0, "thread_count should be positive");
+
+    assert!(process["disk_read_bytes"].is_number(), "disk_read_bytes should be a number");
+    assert!(process["disk_write_bytes"].is_number(), "disk_write_bytes should be a number");
+
+    // open_files can be null for privileged processes, or a number
+    assert!(
+        process["open_files"].is_null() || process["open_files"].is_number(),
+        "open_files should be null or a number"
+    );
+}
+
+#[test]
+fn test_phase3_features_in_csv() {
+    let mut cmd = Command::cargo_bin("stop").unwrap();
+    let output = cmd.arg("--csv").arg("--top-n").arg("1").assert().success();
+
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+
+    assert!(lines.len() >= 2, "Expected header and at least one data row");
+
+    // Check CSV header includes Phase 3 fields
+    let header = lines[0];
+    assert!(header.contains("thread_count"), "CSV header missing thread_count");
+    assert!(header.contains("disk_read_bytes"), "CSV header missing disk_read_bytes");
+    assert!(header.contains("disk_write_bytes"), "CSV header missing disk_write_bytes");
+    assert!(header.contains("open_files"), "CSV header missing open_files");
+
+    // Check data row has these fields (verify by counting commas)
+    let data_row = lines[1];
+    let field_count = data_row.split(',').count();
+    assert!(field_count >= 16, "Expected at least 16 CSV fields including Phase 3 features");
+}

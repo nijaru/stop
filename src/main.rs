@@ -5,7 +5,9 @@ use clap::Parser;
 use filter::FilterExpr;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::error::Error;
+use std::io::{self, Write};
 use sysinfo::System;
 
 /// Minimum interval for CPU usage calculation (milliseconds).
@@ -160,26 +162,41 @@ pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
 /// Escapes a field for CSV output according to RFC 4180.
 ///
 /// Wraps field in quotes and escapes internal quotes if the field contains
-/// commas, quotes, or newlines.
-pub fn escape_csv_field(field: &str) -> String {
+/// commas, quotes, or newlines. Returns a borrowed reference if no escaping is needed,
+/// avoiding unnecessary allocations.
+pub fn escape_csv_field(field: &str) -> Cow<'_, str> {
     // RFC 4180: If field contains comma, quote, or newline, wrap in quotes and escape quotes
     if field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r') {
-        format!("\"{}\"", field.replace('"', "\"\""))
+        Cow::Owned(format!("\"{}\"", field.replace('"', "\"\"")))
     } else {
-        field.to_string()
+        Cow::Borrowed(field)
     }
 }
 
 /// Outputs the CSV header row with all column names.
-pub fn output_csv_header() {
-    println!("timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command,thread_count,disk_read_bytes,disk_write_bytes,open_files");
+///
+/// # Errors
+///
+/// Returns error if writing to stdout fails.
+pub fn output_csv_header() -> io::Result<()> {
+    writeln!(
+        io::stdout(),
+        "timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command,thread_count,disk_read_bytes,disk_write_bytes,open_files"
+    )?;
+    io::stdout().flush()
 }
 
 /// Outputs CSV rows for all processes in the snapshot.
-pub fn output_csv_rows(snapshot: &SystemSnapshot) {
+///
+/// # Errors
+///
+/// Returns error if writing to stdout fails.
+pub fn output_csv_rows(snapshot: &SystemSnapshot) -> io::Result<()> {
+    let mut stdout = io::stdout();
     for process in &snapshot.processes {
         let open_files_str = process.open_files.map(|n| n.to_string()).unwrap_or_default();
-        println!(
+        writeln!(
+            stdout,
             "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             escape_csv_field(&snapshot.timestamp),
             snapshot.system.cpu_usage,
@@ -197,13 +214,14 @@ pub fn output_csv_rows(snapshot: &SystemSnapshot) {
             process.disk_read_bytes,
             process.disk_write_bytes,
             open_files_str
-        );
+        )?;
     }
+    stdout.flush()
 }
 
-fn output_csv(snapshot: &SystemSnapshot) {
-    output_csv_header();
-    output_csv_rows(snapshot);
+fn output_csv(snapshot: &SystemSnapshot) -> io::Result<()> {
+    output_csv_header()?;
+    output_csv_rows(snapshot)
 }
 
 /// Sorts processes in-place by the specified metric.
@@ -245,19 +263,25 @@ pub fn sort_processes(processes: &mut [ProcessInfo], sort_by: &str) {
 ///
 /// Displays system metrics, filter info, and a table of processes with
 /// color-coded CPU and memory usage.
+///
+/// # Errors
+///
+/// Returns error if writing to stdout fails.
 pub fn output_human_readable(
     snapshot: &SystemSnapshot,
     filter_expr: Option<&String>,
     sort_by: &str,
     limit: usize,
-) {
-    println!(
+) -> io::Result<()> {
+    let mut stdout = io::stdout();
+    writeln!(
+        stdout,
         "{} {}",
         "stop".bold().cyan(),
         format!("v{}", env!("CARGO_PKG_VERSION")).dimmed()
-    );
-    println!();
-    println!("{}", "System:".bold());
+    )?;
+    writeln!(stdout)?;
+    writeln!(stdout, "{}", "System:".bold())?;
 
     // Color code CPU based on usage
     let cpu_value = snapshot.system.cpu_usage;
@@ -268,7 +292,7 @@ pub fn output_human_readable(
     } else {
         format!("{cpu_value:.1}%").green().to_string()
     };
-    println!("  CPU: {cpu_display}");
+    writeln!(stdout, "  CPU: {cpu_display}")?;
 
     // Color code memory based on usage
     let mem_value = snapshot.system.memory_percent;
@@ -285,31 +309,33 @@ pub fn output_human_readable(
     } else {
         mem_str.green().to_string()
     };
-    println!("  Memory: {mem_display}");
-    println!();
+    writeln!(stdout, "  Memory: {mem_display}")?;
+    writeln!(stdout)?;
 
     if let Some(filter) = filter_expr {
-        println!("{} {}", "Filter:".bold(), filter.cyan());
+        writeln!(stdout, "{} {}", "Filter:".bold(), filter.cyan())?;
     }
-    println!(
+    writeln!(
+        stdout,
         "{} {} | {} {} {}",
         "Sort:".bold(),
         sort_by.yellow(),
         "Showing:".bold(),
         snapshot.processes.len().min(limit).to_string().green(),
         "processes".dimmed()
-    );
-    println!();
+    )?;
+    writeln!(stdout)?;
 
-    println!(
+    writeln!(
+        stdout,
         "{:<8} {:<20} {:>8} {:>8} {:<10}",
         "PID".bold(),
         "NAME".bold(),
         "CPU%".bold(),
         "MEM%".bold(),
         "USER".bold()
-    );
-    println!("{}", "─".repeat(70).dimmed());
+    )?;
+    writeln!(stdout, "{}", "─".repeat(70).dimmed())?;
 
     for process in &snapshot.processes {
         // Color code CPU usage
@@ -334,15 +360,17 @@ pub fn output_human_readable(
 
         let user_str = &process.user[..process.user.len().min(10)];
         let user_display = user_str.dimmed();
-        println!(
+        writeln!(
+            stdout,
             "{:<8} {:<20} {} {} {:<10}",
             process.pid.to_string().cyan(),
             &process.name[..process.name.len().min(20)],
             cpu_display,
             mem_display,
             user_display
-        );
+        )?;
     }
+    stdout.flush()
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -373,7 +401,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                         "message": e.to_string(),
                         "expression": filter_expr_str,
                     });
-                    println!("{}", serde_json::to_string_pretty(&error_json)?);
+                    // Ignore broken pipe on error output since we're exiting anyway
+                    let _ = writeln!(io::stdout(), "{}", serde_json::to_string_pretty(&error_json)?);
                 } else {
                     eprintln!("Error: {e}");
                     eprintln!("Expression: {filter_expr_str}");
@@ -398,12 +427,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     let limit = args.top_n.unwrap_or(DEFAULT_TOP_N);
     snapshot.processes.truncate(limit);
 
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&snapshot)?);
+    // Output with graceful broken pipe handling
+    let result = if args.json {
+        writeln!(io::stdout(), "{}", serde_json::to_string_pretty(&snapshot)?)
+            .and_then(|_| io::stdout().flush())
     } else if args.csv {
-        output_csv(&snapshot);
+        output_csv(&snapshot)
     } else {
-        output_human_readable(&snapshot, args.filter.as_ref(), sort_by, limit);
+        output_human_readable(&snapshot, args.filter.as_ref(), sort_by, limit)
+    };
+
+    // Exit gracefully on broken pipe (e.g., piping to head)
+    if let Err(e) = result {
+        if e.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(e.into());
     }
 
     Ok(())

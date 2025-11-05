@@ -228,17 +228,6 @@ impl FilterExpr {
 }
 
 impl Filter {
-    #[allow(dead_code)] // Kept for backward compatibility if used as library
-    pub fn parse(expression: &str) -> Result<Self, FilterError> {
-        // For backward compatibility, parse as FilterExpr then extract if simple
-        match FilterExpr::parse(expression)? {
-            FilterExpr::Simple(f) => Ok(f),
-            _ => Err(FilterError::InvalidExpression(
-                "Use FilterExpr::parse for compound expressions".to_string(),
-            )),
-        }
-    }
-
     fn parse_simple(expression: &str) -> Result<Self, FilterError> {
         let expr = expression.trim();
 
@@ -387,30 +376,42 @@ mod tests {
 
     #[test]
     fn test_parse_cpu_filter() {
-        let filter = Filter::parse("cpu > 10").unwrap();
-        assert!(matches!(filter.field, FilterField::Cpu));
-        assert!(matches!(filter.op, FilterOp::Gt));
-        assert!(matches!(filter.value, FilterValue::Float(v) if (v - 10.0).abs() < f32::EPSILON));
+        let expr = FilterExpr::parse("cpu > 10").unwrap();
+        if let FilterExpr::Simple(filter) = expr {
+            assert!(matches!(filter.field, FilterField::Cpu));
+            assert!(matches!(filter.op, FilterOp::Gt));
+            assert!(matches!(filter.value, FilterValue::Float(v) if (v - 10.0).abs() < f32::EPSILON));
+        } else {
+            panic!("Expected FilterExpr::Simple");
+        }
     }
 
     #[test]
     fn test_parse_mem_filter() {
-        let filter = Filter::parse("mem >= 5.5").unwrap();
-        assert!(matches!(filter.field, FilterField::Mem));
-        assert!(matches!(filter.op, FilterOp::Gte));
+        let expr = FilterExpr::parse("mem >= 5.5").unwrap();
+        if let FilterExpr::Simple(filter) = expr {
+            assert!(matches!(filter.field, FilterField::Mem));
+            assert!(matches!(filter.op, FilterOp::Gte));
+        } else {
+            panic!("Expected FilterExpr::Simple");
+        }
     }
 
     #[test]
     fn test_parse_name_filter() {
-        let filter = Filter::parse("name == chrome").unwrap();
-        assert!(matches!(filter.field, FilterField::Name));
-        assert!(matches!(filter.op, FilterOp::Eq));
-        assert!(matches!(filter.value, FilterValue::String { .. }));
+        let expr = FilterExpr::parse("name == chrome").unwrap();
+        if let FilterExpr::Simple(filter) = expr {
+            assert!(matches!(filter.field, FilterField::Name));
+            assert!(matches!(filter.op, FilterOp::Eq));
+            assert!(matches!(filter.value, FilterValue::String { .. }));
+        } else {
+            panic!("Expected FilterExpr::Simple");
+        }
     }
 
     #[test]
     fn test_invalid_field() {
-        let result = Filter::parse("invalid > 10");
+        let result = FilterExpr::parse("invalid > 10");
         assert!(matches!(result, Err(FilterError::UnknownField(_))));
     }
 
@@ -418,25 +419,25 @@ mod tests {
     fn test_invalid_operator() {
         // "cpu >> 10" will parse ">" first, leaving "> 10" as value
         // This results in InvalidValue, not InvalidExpression
-        let result = Filter::parse("cpu >> 10");
+        let result = FilterExpr::parse("cpu >> 10");
         assert!(matches!(result, Err(FilterError::InvalidValue { .. })));
     }
 
     #[test]
     fn test_type_mismatch() {
-        let result = Filter::parse("name > 10");
+        let result = FilterExpr::parse("name > 10");
         assert!(matches!(result, Err(FilterError::TypeMismatch { .. })));
     }
 
     #[test]
     fn test_invalid_value() {
-        let result = Filter::parse("cpu > abc");
+        let result = FilterExpr::parse("cpu > abc");
         assert!(matches!(result, Err(FilterError::InvalidValue { .. })));
     }
 
     #[test]
     fn test_empty_expression() {
-        let result = Filter::parse("");
+        let result = FilterExpr::parse("");
         assert!(matches!(result, Err(FilterError::InvalidExpression(_))));
     }
 

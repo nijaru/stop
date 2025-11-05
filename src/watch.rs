@@ -67,11 +67,15 @@ pub fn watch_mode(args: &Args) -> Result<(), Box<dyn Error>> {
         } else if args.csv {
             // CSV: header once, then rows
             if first_iteration {
-                output_csv_header();
+                if let Err(e) = output_csv_header() {
+                    if e.kind() == std::io::ErrorKind::BrokenPipe {
+                        return Ok(()); // Graceful exit when output is closed
+                    }
+                    return Err(e.into());
+                }
                 first_iteration = false;
             }
-            output_csv_rows(&snapshot);
-            if let Err(e) = stdout().flush() {
+            if let Err(e) = output_csv_rows(&snapshot) {
                 if e.kind() == std::io::ErrorKind::BrokenPipe {
                     return Ok(()); // Graceful exit when output is closed
                 }
@@ -82,8 +86,7 @@ pub fn watch_mode(args: &Args) -> Result<(), Box<dyn Error>> {
             stdout()
                 .execute(terminal::Clear(terminal::ClearType::All))?
                 .execute(cursor::MoveTo(0, 0))?;
-            output_human_readable(&snapshot, args.filter.as_ref(), sort_by, limit);
-            if let Err(e) = stdout().flush() {
+            if let Err(e) = output_human_readable(&snapshot, args.filter.as_ref(), sort_by, limit) {
                 if e.kind() == std::io::ErrorKind::BrokenPipe {
                     return Ok(()); // Graceful exit when output is closed
                 }
