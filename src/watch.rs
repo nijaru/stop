@@ -89,7 +89,14 @@ pub fn watch_mode(args: &Args) -> Result<(), Box<dyn Error>> {
             stdout()
                 .execute(terminal::Clear(terminal::ClearType::All))?
                 .execute(cursor::MoveTo(0, 0))?;
-            if let Err(e) = output_human_readable(&snapshot, args.search.as_ref(), args.filter.as_ref(), sort_by, limit, args.verbose) {
+            if let Err(e) = output_human_readable(
+                &snapshot,
+                args.search.as_ref(),
+                args.filter.as_ref(),
+                sort_by,
+                limit,
+                args.verbose,
+            ) {
                 if e.kind() == std::io::ErrorKind::BrokenPipe {
                     return Ok(()); // Graceful exit when output is closed
                 }

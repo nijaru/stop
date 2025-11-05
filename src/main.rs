@@ -95,7 +95,12 @@ Examples:
     #[arg(long, help = "Continuous monitoring (watch mode)")]
     pub watch: bool,
 
-    #[arg(long, value_name = "SECS", help = "Update interval", default_value_t = 2.0)]
+    #[arg(
+        long,
+        value_name = "SECS",
+        help = "Update interval",
+        default_value_t = 2.0
+    )]
     pub interval: f64,
 
     #[arg(short, long, help = "Show threads, disk I/O, and open files")]
@@ -556,7 +561,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else if args.csv {
         output_csv(&snapshot)
     } else {
-        output_human_readable(&snapshot, args.search.as_ref(), args.filter.as_ref(), sort_by, limit, args.verbose)
+        output_human_readable(
+            &snapshot,
+            args.search.as_ref(),
+            args.filter.as_ref(),
+            sort_by,
+            limit,
+            args.verbose,
+        )
     };
 
     // Exit gracefully on broken pipe (e.g., piping to head)
