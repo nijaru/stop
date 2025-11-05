@@ -34,6 +34,9 @@ Traditional monitoring tools output formatted text that's hard to parse:
 ## Installation
 
 ```bash
+# From crates.io
+cargo install stop-cli
+
 # From source
 git clone https://github.com/nijaru/stop.git
 cd stop

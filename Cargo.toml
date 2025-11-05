@@ -1,5 +1,5 @@
 [package]
-name = "stop"
+name = "stop-cli"
 version = "0.0.1-alpha"
 edition = "2024"
 authors = ["Nick <nick@nijaru.com>"]
@@ -8,6 +8,10 @@ license = "MIT"
 repository = "https://github.com/nijaru/stop"
 keywords = ["cli", "monitoring", "processes", "json", "top"]
 categories = ["command-line-utilities"]
+
+[[bin]]
+name = "stop"
+path = "src/main.rs"
 
 [dependencies]
 sysinfo = "0.37"
