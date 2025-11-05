@@ -1,6 +1,6 @@
 [package]
 name = "stop-cli"
-version = "0.0.1-beta"
+version = "0.0.1"
 edition = "2024"
 authors = ["Nick <nick@nijaru.com>"]
 description = "Modern process monitoring with JSON, CSV, and human-readable output"

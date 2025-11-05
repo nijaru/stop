@@ -197,7 +197,7 @@ fn test_human_readable_output() {
         .assert()
         .success()
         .stdout(predicate::str::contains("stop"))
-        .stdout(predicate::str::contains("v0.0.1-beta"))
+        .stdout(predicate::str::contains("v0.0.1"))
         .stdout(predicate::str::contains("System:"))
         .stdout(predicate::str::contains("CPU:"))
         .stdout(predicate::str::contains("Memory:"));

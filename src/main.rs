@@ -533,9 +533,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     // Apply search (case-insensitive substring match in name or command)
+    // Exclude current process to avoid self-reference (search term appears in command args)
     if let Some(search_term) = &args.search {
         let search_lower = search_term.to_lowercase();
+        let current_pid = std::process::id();
         snapshot.processes.retain(|p| {
+            if p.pid == current_pid {
+                return false; // Always exclude current process from search results
+            }
             p.name.to_lowercase().contains(&search_lower)
                 || p.command.to_lowercase().contains(&search_lower)
         });
