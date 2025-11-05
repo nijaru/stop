@@ -24,81 +24,54 @@ const DEFAULT_TOP_N: usize = 20;
 #[command(long_about = "Modern process monitoring with structured output
 
 EXAMPLES:
-    stop                              # Human-readable table (default)
-    stop --json                       # JSON output
-    stop --csv                        # CSV output
-    stop --filter \"cpu > 10\"          # Filter high CPU processes
+    stop                              # Human-readable table
+    stop --json                       # JSON output (all metrics)
+    stop --verbose                    # Show threads, I/O, files
+    stop --filter \"cpu > 10\"          # Filter processes
     stop --sort-by mem --top-n 5      # Top 5 by memory
-    stop --watch --interval 1         # Continuous monitoring
+    stop --watch --interval 1         # Live monitoring
 
-FILTER SYNTAX:
-    Fields:    cpu, mem, pid, name, user
-    Operators: >, >=, <, <=, ==, !=
-    Logic:     and, or (case-insensitive)
-
-    Examples:
-        cpu > 50
-        mem >= 5.0
-        name == chrome
-        cpu > 10 and mem > 5
-        name == chrome or name == firefox")]
+See --help on individual flags for more details.")]
 #[command(version)]
 pub struct Args {
-    #[arg(long, help = "Output as JSON (includes all metrics)")]
+    #[arg(long, help = "Output as JSON")]
     pub json: bool,
 
-    #[arg(long, help = "Output as CSV (includes all metrics)")]
+    #[arg(long, help = "Output as CSV")]
     pub csv: bool,
 
     #[arg(
         long,
         value_name = "EXPR",
-        help = "Filter processes",
+        help = "Filter processes (e.g., 'cpu > 10')",
         long_help = "Filter processes by expression
 
-Fields: cpu, mem, pid, name, user
+Fields:    cpu, mem, pid, name, user
 Operators: >, >=, <, <=, ==, !=
-Logic: and, or (case-insensitive)
+Logic:     and, or (case-insensitive)
 
 Examples:
-  --filter 'cpu > 50'
-  --filter 'mem >= 5.0'
-  --filter 'name == chrome'
-  --filter 'cpu > 10 and mem > 5'
-  --filter 'name == chrome or name == firefox'"
+  cpu > 50
+  mem >= 5.0
+  name == chrome
+  cpu > 10 and mem > 5
+  name == chrome or name == firefox"
     )]
     pub filter: Option<String>,
 
-    #[arg(
-        long,
-        value_name = "FIELD",
-        help = "Sort by: cpu, mem, pid, name (default: cpu)"
-    )]
+    #[arg(long, value_name = "FIELD", help = "Sort by: cpu, mem, pid, name")]
     pub sort_by: Option<String>,
 
-    #[arg(
-        long,
-        value_name = "N",
-        help = "Show top N processes (default: 20)"
-    )]
+    #[arg(long, value_name = "N", help = "Show top N processes")]
     pub top_n: Option<usize>,
 
-    #[arg(long, help = "Watch mode - continuous monitoring with updates")]
+    #[arg(long, help = "Continuous monitoring (watch mode)")]
     pub watch: bool,
 
-    #[arg(
-        long,
-        value_name = "SECONDS",
-        help = "Update interval for watch mode",
-        default_value_t = 2.0
-    )]
+    #[arg(long, value_name = "SECS", help = "Update interval", default_value_t = 2.0)]
     pub interval: f64,
 
-    #[arg(
-        short,
-        long,
-        help = "Verbose output - show all metrics (threads, I/O, files)"
-    )]
+    #[arg(short, long, help = "Show threads, disk I/O, and open files")]
     pub verbose: bool,
 }
 
