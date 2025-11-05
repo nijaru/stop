@@ -18,23 +18,25 @@ const CPU_SAMPLE_INTERVAL_MS: u64 = 200;
 const DEFAULT_TOP_N: usize = 20;
 
 /// Format bytes into human-readable string with colored unit suffix.
-/// Returns a string with the number and unit separated by a space,
-/// with the unit dimmed for visual distinction.
-fn format_bytes(bytes: u64) -> String {
+/// Returns a tuple of (value_string, unit_string) for proper alignment.
+fn format_bytes_parts(bytes: u64) -> (String, String) {
     const KB: f64 = 1024.0;
     const MB: f64 = 1024.0 * 1024.0;
     const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+    const TB: f64 = 1024.0 * 1024.0 * 1024.0 * 1024.0;
 
     let bytes_f = bytes as f64;
 
-    if bytes_f >= GB {
-        format!("{:.1} {}", bytes_f / GB, "G".dimmed())
+    if bytes_f >= TB {
+        (format!("{:.1}", bytes_f / TB), "T".to_string())
+    } else if bytes_f >= GB {
+        (format!("{:.1}", bytes_f / GB), "G".to_string())
     } else if bytes_f >= MB {
-        format!("{:.1} {}", bytes_f / MB, "M".dimmed())
+        (format!("{:.1}", bytes_f / MB), "M".to_string())
     } else if bytes_f >= KB {
-        format!("{:.1} {}", bytes_f / KB, "K".dimmed())
+        (format!("{:.1}", bytes_f / KB), "K".to_string())
     } else {
-        format!("{} {}", bytes, "B".dimmed())
+        (format!("{}", bytes), "B".to_string())
     }
 }
 
@@ -379,7 +381,7 @@ pub fn output_human_readable(
     if verbose {
         writeln!(
             stdout,
-            "{:<8} {:<20} {:>8} {:>8} {:>7} {:>10} {:>10} {:>7}",
+            "{:<8} {:<20} {:>8} {:>8} {:>7} {:>8} {:>8} {:>7}",
             "PID".bold(),
             "Name".bold(),
             "CPU%".bold(),
@@ -389,7 +391,7 @@ pub fn output_human_readable(
             "Write".bold(),
             "Files".bold()
         )?;
-        writeln!(stdout, "{}", "─".repeat(98).dimmed())?;
+        writeln!(stdout, "{}", "─".repeat(93).dimmed())?;
     } else {
         writeln!(
             stdout,
@@ -425,23 +427,28 @@ pub fn output_human_readable(
         };
 
         if verbose {
-            let disk_read = format_bytes(process.disk_read_bytes);
-            let disk_write = format_bytes(process.disk_write_bytes);
+            let (read_val, read_unit) = format_bytes_parts(process.disk_read_bytes);
+            let (write_val, write_unit) = format_bytes_parts(process.disk_write_bytes);
             let open_files_str = process
                 .open_files
                 .map(|f| f.to_string())
                 .unwrap_or_else(|| "-".to_string());
 
+            // Format disk I/O with right-aligned numbers and dimmed units
+            // Width: 6 chars for number + 1 space + 1 char for unit = 8 total
+            let read_formatted = format!("{:>6} {}", read_val, read_unit.dimmed());
+            let write_formatted = format!("{:>6} {}", write_val, write_unit.dimmed());
+
             writeln!(
                 stdout,
-                "{:<8} {:<20} {} {} {:>7} {:>10} {:>10} {:>7}",
+                "{:<8} {:<20} {} {} {:>7} {} {} {:>7}",
                 process.pid.to_string().cyan(),
                 &process.name[..process.name.len().min(20)],
                 cpu_display,
                 mem_display,
                 process.thread_count,
-                disk_read,
-                disk_write,
+                read_formatted,
+                write_formatted,
                 open_files_str
             )?;
         } else {
