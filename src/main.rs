@@ -25,13 +25,9 @@ const DEFAULT_TOP_N: usize = 20;
 
 EXAMPLES:
     stop                              # Human-readable table
-    stop --json                       # JSON output (all metrics)
-    stop --verbose                    # Show threads, I/O, files
+    stop --json                       # JSON output
     stop --filter \"cpu > 10\"          # Filter processes
-    stop --sort-by mem --top-n 5      # Top 5 by memory
-    stop --watch --interval 1         # Live monitoring
-
-See --help on individual flags for more details.")]
+    stop --watch                      # Live monitoring")]
 #[command(version)]
 pub struct Args {
     #[arg(long, help = "Output as JSON")]
@@ -48,12 +44,10 @@ pub struct Args {
 
 Fields:    cpu, mem, pid, name, user
 Operators: >, >=, <, <=, ==, !=
-Logic:     and, or (case-insensitive)
+Logic:     and, or
 
 Examples:
   cpu > 50
-  mem >= 5.0
-  name == chrome
   cpu > 10 and mem > 5
   name == chrome or name == firefox"
     )]
