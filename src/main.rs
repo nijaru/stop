@@ -49,7 +49,9 @@ fn format_bytes_parts(bytes: u64) -> (String, String) {
 EXAMPLES:
     stop                              # Human-readable table
     stop --json                       # JSON output
+    stop -s chrome                    # Search for chrome processes
     stop --filter \"cpu > 10\"          # Filter processes
+    stop -s postgres --filter \"mem > 5\" # Combine search and filter
     stop --watch                      # Live monitoring")]
 #[command(version)]
 pub struct Args {
@@ -58,6 +60,14 @@ pub struct Args {
 
     #[arg(long, help = "Output as CSV")]
     pub csv: bool,
+
+    #[arg(
+        short,
+        long,
+        value_name = "TEXT",
+        help = "Search processes by name or command"
+    )]
+    pub search: Option<String>,
 
     #[arg(
         long,
@@ -320,6 +330,7 @@ pub fn sort_processes(processes: &mut [ProcessInfo], sort_by: &str) {
 /// Returns error if writing to stdout fails.
 pub fn output_human_readable(
     snapshot: &SystemSnapshot,
+    search_term: Option<&String>,
     filter_expr: Option<&String>,
     sort_by: &str,
     limit: usize,
@@ -364,6 +375,9 @@ pub fn output_human_readable(
     writeln!(stdout, "  Memory: {mem_display}")?;
     writeln!(stdout)?;
 
+    if let Some(search) = search_term {
+        writeln!(stdout, "{} {}", "Search:".bold(), search.cyan())?;
+    }
     if let Some(filter) = filter_expr {
         writeln!(stdout, "{} {}", "Filter:".bold(), filter.cyan())?;
     }
@@ -513,6 +527,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         None
     };
 
+    // Apply search (case-insensitive substring match in name or command)
+    if let Some(search_term) = &args.search {
+        let search_lower = search_term.to_lowercase();
+        snapshot.processes.retain(|p| {
+            p.name.to_lowercase().contains(&search_lower)
+                || p.command.to_lowercase().contains(&search_lower)
+        });
+    }
+
     // Apply filter
     if let Some(ref f) = filter {
         snapshot.processes.retain(|p| f.matches(p));
@@ -533,7 +556,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else if args.csv {
         output_csv(&snapshot)
     } else {
-        output_human_readable(&snapshot, args.filter.as_ref(), sort_by, limit, args.verbose)
+        output_human_readable(&snapshot, args.search.as_ref(), args.filter.as_ref(), sort_by, limit, args.verbose)
     };
 
     // Exit gracefully on broken pipe (e.g., piping to head)
