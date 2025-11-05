@@ -20,33 +20,86 @@ const DEFAULT_TOP_N: usize = 20;
 /// Command-line arguments for the stop tool.
 #[derive(Parser, Debug)]
 #[command(name = "stop")]
-#[command(about = "Structured process and system monitoring with JSON output")]
+#[command(about = "Modern process monitoring with structured output")]
+#[command(long_about = "Modern process monitoring with structured output
+
+EXAMPLES:
+    stop                              # Human-readable table (default)
+    stop --json                       # JSON output
+    stop --csv                        # CSV output
+    stop --filter \"cpu > 10\"          # Filter high CPU processes
+    stop --sort-by mem --top-n 5      # Top 5 by memory
+    stop --watch --interval 1         # Continuous monitoring
+
+FILTER SYNTAX:
+    Fields:    cpu, mem, pid, name, user
+    Operators: >, >=, <, <=, ==, !=
+    Logic:     and, or (case-insensitive)
+
+    Examples:
+        cpu > 50
+        mem >= 5.0
+        name == chrome
+        cpu > 10 and mem > 5
+        name == chrome or name == firefox")]
 #[command(version)]
 pub struct Args {
-    #[arg(long, help = "Output as JSON")]
+    #[arg(long, help = "Output as JSON (includes all metrics)")]
     pub json: bool,
 
-    #[arg(long, help = "Output as CSV")]
+    #[arg(long, help = "Output as CSV (includes all metrics)")]
     pub csv: bool,
 
-    #[arg(long, help = "Filter processes (e.g., 'cpu > 10')")]
+    #[arg(
+        long,
+        value_name = "EXPR",
+        help = "Filter processes",
+        long_help = "Filter processes by expression
+
+Fields: cpu, mem, pid, name, user
+Operators: >, >=, <, <=, ==, !=
+Logic: and, or (case-insensitive)
+
+Examples:
+  --filter 'cpu > 50'
+  --filter 'mem >= 5.0'
+  --filter 'name == chrome'
+  --filter 'cpu > 10 and mem > 5'
+  --filter 'name == chrome or name == firefox'"
+    )]
     pub filter: Option<String>,
 
-    #[arg(long, help = "Sort by metric (cpu, mem, pid, name)")]
+    #[arg(
+        long,
+        value_name = "FIELD",
+        help = "Sort by: cpu, mem, pid, name (default: cpu)"
+    )]
     pub sort_by: Option<String>,
 
-    #[arg(long, help = "Show top N processes")]
+    #[arg(
+        long,
+        value_name = "N",
+        help = "Show top N processes (default: 20)"
+    )]
     pub top_n: Option<usize>,
 
-    #[arg(long, help = "Watch mode (continuous updates)")]
+    #[arg(long, help = "Watch mode - continuous monitoring with updates")]
     pub watch: bool,
 
     #[arg(
         long,
-        help = "Update interval in seconds for watch mode",
+        value_name = "SECONDS",
+        help = "Update interval for watch mode",
         default_value_t = 2.0
     )]
     pub interval: f64,
+
+    #[arg(
+        short,
+        long,
+        help = "Verbose output - show all metrics (threads, I/O, files)"
+    )]
+    pub verbose: bool,
 }
 
 /// A snapshot of system and process metrics at a point in time.
@@ -280,6 +333,7 @@ pub fn output_human_readable(
     filter_expr: Option<&String>,
     sort_by: &str,
     limit: usize,
+    verbose: bool,
 ) -> io::Result<()> {
     let mut stdout = io::stdout();
     writeln!(
@@ -334,16 +388,32 @@ pub fn output_human_readable(
     )?;
     writeln!(stdout)?;
 
-    writeln!(
-        stdout,
-        "{:<8} {:<20} {:>8} {:>8} {:<10}",
-        "PID".bold(),
-        "NAME".bold(),
-        "CPU%".bold(),
-        "MEM%".bold(),
-        "USER".bold()
-    )?;
-    writeln!(stdout, "{}", "─".repeat(70).dimmed())?;
+    if verbose {
+        writeln!(
+            stdout,
+            "{:<8} {:<20} {:>8} {:>8} {:>7} {:>10} {:>10} {:>7}",
+            "PID".bold(),
+            "NAME".bold(),
+            "CPU%".bold(),
+            "MEM%".bold(),
+            "THREADS".bold(),
+            "DISK_R_MB".bold(),
+            "DISK_W_MB".bold(),
+            "FILES".bold()
+        )?;
+        writeln!(stdout, "{}", "─".repeat(100).dimmed())?;
+    } else {
+        writeln!(
+            stdout,
+            "{:<8} {:<20} {:>8} {:>8} {:<10}",
+            "PID".bold(),
+            "NAME".bold(),
+            "CPU%".bold(),
+            "MEM%".bold(),
+            "USER".bold()
+        )?;
+        writeln!(stdout, "{}", "─".repeat(70).dimmed())?;
+    }
 
     for process in &snapshot.processes {
         // Color code CPU usage
@@ -366,17 +436,39 @@ pub fn output_human_readable(
             mem_str.to_string()
         };
 
-        let user_str = &process.user[..process.user.len().min(10)];
-        let user_display = user_str.dimmed();
-        writeln!(
-            stdout,
-            "{:<8} {:<20} {} {} {:<10}",
-            process.pid.to_string().cyan(),
-            &process.name[..process.name.len().min(20)],
-            cpu_display,
-            mem_display,
-            user_display
-        )?;
+        if verbose {
+            let disk_read_mb = process.disk_read_bytes as f64 / 1024.0 / 1024.0;
+            let disk_write_mb = process.disk_write_bytes as f64 / 1024.0 / 1024.0;
+            let open_files_str = process
+                .open_files
+                .map(|f| f.to_string())
+                .unwrap_or_else(|| "-".to_string());
+
+            writeln!(
+                stdout,
+                "{:<8} {:<20} {} {} {:>7} {:>10.1} {:>10.1} {:>7}",
+                process.pid.to_string().cyan(),
+                &process.name[..process.name.len().min(20)],
+                cpu_display,
+                mem_display,
+                process.thread_count,
+                disk_read_mb,
+                disk_write_mb,
+                open_files_str
+            )?;
+        } else {
+            let user_str = &process.user[..process.user.len().min(10)];
+            let user_display = user_str.dimmed();
+            writeln!(
+                stdout,
+                "{:<8} {:<20} {} {} {:<10}",
+                process.pid.to_string().cyan(),
+                &process.name[..process.name.len().min(20)],
+                cpu_display,
+                mem_display,
+                user_display
+            )?;
+        }
     }
     stdout.flush()
 }
@@ -446,7 +538,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else if args.csv {
         output_csv(&snapshot)
     } else {
-        output_human_readable(&snapshot, args.filter.as_ref(), sort_by, limit)
+        output_human_readable(&snapshot, args.filter.as_ref(), sort_by, limit, args.verbose)
     };
 
     // Exit gracefully on broken pipe (e.g., piping to head)
