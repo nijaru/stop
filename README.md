@@ -1,23 +1,22 @@
 # stop
 
-> Structured process and system monitoring with JSON output
+> Modern process monitoring with structured output
 
-**stop** (structured top) is a modern system monitoring tool designed for AI agents and automation. Unlike traditional `top`/`htop`/`ps` which output human-readable text, `stop` provides structured JSON data for easy parsing and integration.
+**stop** (structured top) is a process and system monitoring tool that outputs JSON, CSV, or human-readable formats. Get system metrics and process information in a format that's easy to parse, script, and automate.
 
 ## Why stop?
 
-**AI agents need structured data, not pretty text.**
-
-Traditional monitoring tools are designed for humans:
-- `top`/`htop` - Interactive TUI with colors and formatting
-- `ps` - Text output that needs complex parsing
+Traditional monitoring tools output formatted text that's hard to parse:
+- `top`/`htop` - Interactive TUI, not script-friendly
+- `ps` - Text output requires complex parsing (awk/grep/sed)
 - `iostat`/`vmstat` - Inconsistent formats across platforms
 
 **stop** provides:
-- Clean JSON output for programmatic consumption
-- Consistent format across platforms (macOS, Linux, Windows)
-- Query and filter capabilities
-- One-shot or continuous monitoring modes
+- **Structured output** - JSON and CSV for easy parsing
+- **Powerful filtering** - Simple syntax with AND/OR logic
+- **Multiple formats** - JSON for scripts, CSV for analysis, human-readable for terminals
+- **Cross-platform** - Consistent behavior across macOS and Linux
+- **Watch mode** - Continuous monitoring with configurable intervals
 
 ## Status
 
@@ -206,19 +205,7 @@ stop --filter "cpu > 50 and mem > 10 or name == chrome"
 
 ## Use Cases
 
-**AI Agents:**
-- Debug performance issues
-- Check if processes are running
-- Monitor resource usage
-- Automate system management
-
-**Automation:**
-- Alert on high resource usage
-- Kill processes exceeding thresholds
-- Log system metrics for analysis
-- Integration with monitoring systems
-
-**Scripting:**
+**Scripting & Automation:**
 ```bash
 # Kill processes using >50% CPU
 stop --filter "cpu > 50" --json | jq -r '.processes[].pid' | xargs kill
@@ -227,7 +214,22 @@ stop --filter "cpu > 50" --json | jq -r '.processes[].pid' | xargs kill
 if [ $(stop --json | jq '.system.memory_percent') -gt 80 ]; then
   echo "High memory usage!"
 fi
+
+# Log metrics for analysis
+stop --csv --interval 5 > metrics.csv
 ```
+
+**Monitoring & Alerting:**
+- Track resource usage over time
+- Trigger alerts on thresholds
+- Export data for analysis
+- Integration with monitoring systems
+
+**Development & Debugging:**
+- Find resource-intensive processes
+- Monitor application behavior
+- Track I/O and thread usage
+- Verify processes are running
 
 ## Practical Examples
 
@@ -312,10 +314,10 @@ stop --filter "cpu > 80 and name == myapp" --json | \
 
 ## Design Goals
 
-1. **Structured Output** - JSON by default for AI/automation
-2. **Cross-Platform** - Consistent behavior across OS
+1. **Structured Output** - JSON and CSV for easy parsing and automation
+2. **Cross-Platform** - Consistent behavior across operating systems
 3. **Fast** - Minimal overhead, efficient data collection
-4. **Simple** - Easy to use, clear output format
+4. **Simple** - Easy to use, clear syntax
 5. **Reliable** - Production-ready error handling
 
 ## Comparison
@@ -323,9 +325,10 @@ stop --filter "cpu > 80 and name == myapp" --json | \
 | Feature | top/htop | ps | stop |
 |---------|----------|-----|------|
 | JSON output | ❌ | ❌ | ✅ |
-| Filtering | Limited | Complex | Simple flags |
+| CSV output | ❌ | ❌ | ✅ |
+| Filtering | Limited | Complex | Simple syntax |
 | Cross-platform | ⚠️ Varies | ⚠️ Varies | ✅ Consistent |
-| AI-friendly | ❌ TUI | ❌ Text parsing | ✅ Structured |
+| Structured data | ❌ TUI | ❌ Text parsing | ✅ JSON/CSV |
 | Watch mode | ✅ | ❌ | ✅ |
 | One-shot | ❌ | ✅ | ✅ |
 
@@ -348,26 +351,17 @@ cargo install --path .
 
 ## Implementation Details
 
-**Tech Stack:**
-- Rust 2024 edition
-- sysinfo 0.37 - Cross-platform system metrics
-- clap 4.5 - CLI parsing
-- thiserror 2.0 - Structured error handling
-- owo-colors 4.1 - Terminal colors
-
 **Architecture:**
 - Type-safe filter module with comprehensive validation
 - Parse-time error checking (not eval-time)
-- Zero-copy processing where possible
-- Minimal allocations in hot paths
+- Efficient data collection with minimal overhead
+- Cross-platform system metrics via sysinfo
 
 **Testing:**
-- 16 unit tests (filter parsing, compound expressions, edge cases)
-- 19 edge case tests (unicode, special chars, error conditions)
-- 17 integration tests (CLI, output formats, Phase 3 features, broken pipe handling)
-- All 52 tests passing, zero clippy warnings
-- CI/CD with GitHub Actions (Ubuntu and macOS)
-- Performance profiled: 29ms overhead, 86% allocation reduction in watch mode
+- 52 tests: 16 unit + 19 edge case + 17 integration
+- Continuous integration on Ubuntu and macOS
+- All tests passing, zero warnings
+- Performance: <30ms overhead, optimized for watch mode
 
 ## Known Limitations
 
