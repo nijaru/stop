@@ -359,25 +359,25 @@ pub fn output_human_readable(
         writeln!(
             stdout,
             "{:<8} {:<20} {:>8} {:>8} {:>7} {:>10} {:>10} {:>7}",
-            "PID".bold(),
-            "NAME".bold(),
+            "Pid".bold(),
+            "Name".bold(),
             "CPU%".bold(),
-            "MEM%".bold(),
-            "THREADS".bold(),
-            "DISK_R_MB".bold(),
-            "DISK_W_MB".bold(),
-            "FILES".bold()
+            "Mem%".bold(),
+            "Threads".bold(),
+            "Read MB".bold(),
+            "Write MB".bold(),
+            "Files".bold()
         )?;
         writeln!(stdout, "{}", "─".repeat(100).dimmed())?;
     } else {
         writeln!(
             stdout,
             "{:<8} {:<20} {:>8} {:>8} {:<10}",
-            "PID".bold(),
-            "NAME".bold(),
+            "Pid".bold(),
+            "Name".bold(),
             "CPU%".bold(),
-            "MEM%".bold(),
-            "USER".bold()
+            "Mem%".bold(),
+            "User".bold()
         )?;
         writeln!(stdout, "{}", "─".repeat(70).dimmed())?;
     }
