@@ -2,9 +2,11 @@
 
 ## Current State
 
-**Version**: v0.0.1
-**Phase**: All core phases complete (1, 2, 3, 4), optimizations done
-**Last Updated**: 2025-11-04
+**Version**: v0.0.1-alpha (RELEASED)
+**Crate**: stop-cli (published to crates.io)
+**Binary**: stop
+**Phase**: Alpha release - field testing
+**Last Updated**: 2025-11-05
 
 ## What Works
 
@@ -37,7 +39,8 @@
 - ⚠️ Network metrics (DEFERRED - sysinfo doesn't support per-process)
 
 **Code Quality:**
-- ✅ 48 tests (16 unit + 13 integration + 19 edge cases), all passing
+- ✅ 52 tests (16 unit + 17 integration + 19 edge cases), all passing
+- ✅ CI/CD pipeline (GitHub Actions on Ubuntu and macOS)
 - ✅ Zero clippy warnings
 - ✅ Proper error handling with thiserror
 - ✅ Type-safe filter module with parse-time validation
@@ -58,6 +61,33 @@
 - ❌ Windows testing (untested, but should work)
 
 ## Recent Changes
+
+### v0.0.1-alpha Release (2025-11-05)
+**Commits**: 1cbb53f, 86f24c7, 6cf87cc, e6cf20a
+
+**Released**:
+- ✅ Published to crates.io as `stop-cli`
+- ✅ GitHub release created (prerelease)
+- ✅ Git tag v0.0.1-alpha
+- ✅ CI/CD pipeline established (GitHub Actions)
+- ✅ All 52 tests passing on Ubuntu and macOS
+
+**Changes for Release**:
+- Renamed crate to `stop-cli` (binary name still `stop`)
+  - Name conflict: "stop" already taken on crates.io
+  - Installation: `cargo install stop-cli`
+- Repositioned messaging as general-purpose tool
+  - Removed AI-first marketing
+  - Focus on structured output for everyone
+  - Similar positioning to rg, fd, bat
+- Fixed CI test failures
+  - thread_count validation (was too strict for CI environments)
+  - Broken pipe test handling (zombie processes)
+  - Deprecated Command::cargo_bin warnings
+
+**Links**:
+- crates.io: https://crates.io/crates/stop-cli
+- GitHub Release: https://github.com/nijaru/stop/releases/tag/v0.0.1-alpha
 
 ### Comprehensive Testing & Optimization (2025-11-04)
 **Commits**: b851e51, e09c265
@@ -135,24 +165,28 @@
 
 ## Next Steps
 
-**Completed Phases:**
+**Completed:**
 1. ✅ Phase 1: MVP (filter, sort, top-n, tests)
 2. ✅ Phase 2: Query & Filter (AND/OR logic, CSV output, colors)
 3. ✅ Phase 3: Advanced Monitoring (threads, disk I/O, open files)
 4. ✅ Phase 4: Watch Mode (continuous monitoring, NDJSON)
-5. ✅ Comprehensive Testing (48 tests, profiling, edge cases)
+5. ✅ Comprehensive Testing (52 tests, profiling, edge cases)
 6. ✅ Performance Optimization (86% allocation reduction)
+7. ✅ CI/CD Pipeline (GitHub Actions)
+8. ✅ v0.0.1-alpha Release (crates.io, GitHub)
 
-**Ready For:**
-- Real-world user testing
-- Field validation
-- Version bump to 0.1.0 (after field testing)
+**Current Phase: Field Testing**
+- Gather user feedback
+- Monitor for bug reports
+- Track feature requests
+- Validate cross-platform behavior
 - Optional: Windows testing
 
-**Not Needed:**
-- Further performance optimization (already excellent)
-- Memory optimization (no leaks, stable at 64MB)
-- Network metrics (sysinfo doesn't support it)
+**Future (post-field testing):**
+- Version bump to 0.1.0 (stable release)
+- Address feedback and bugs
+- Consider additional formats if requested (YAML, TSV, etc.)
+- Parentheses for complex filter grouping (if needed)
 
 ## Known Issues & Limitations
 
@@ -199,12 +233,13 @@
 
 ```
 Unit tests:        16 passing (filter parsing logic)
-Integration tests: 13 passing (CLI behavior)
+Integration tests: 17 passing (CLI behavior, broken pipe handling)
 Edge case tests:   19 passing (error conditions, edge cases)
-Total:             48 tests passing
+Total:             52 tests passing
 ```
 
 **Test execution time**: <1s for full suite
+**CI/CD**: GitHub Actions on Ubuntu and macOS
 
 ## Development Environment
 
