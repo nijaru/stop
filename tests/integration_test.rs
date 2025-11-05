@@ -11,7 +11,7 @@ fn test_help_flag() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "Structured process and system monitoring",
+            "Modern process monitoring with structured output",
         ));
 }
 
@@ -197,7 +197,7 @@ fn test_human_readable_output() {
         .assert()
         .success()
         .stdout(predicate::str::contains("stop"))
-        .stdout(predicate::str::contains("v0.0.1"))
+        .stdout(predicate::str::contains("v0.0.1-beta"))
         .stdout(predicate::str::contains("System:"))
         .stdout(predicate::str::contains("CPU:"))
         .stdout(predicate::str::contains("Memory:"));
