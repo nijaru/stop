@@ -17,6 +17,25 @@ const CPU_SAMPLE_INTERVAL_MS: u64 = 200;
 /// Default number of processes to show when --top-n is not specified.
 const DEFAULT_TOP_N: usize = 20;
 
+/// Format bytes into human-readable string (B, KB, MB, GB).
+fn format_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+
+    let bytes_f = bytes as f64;
+
+    if bytes_f >= GB {
+        format!("{:.1}G", bytes_f / GB)
+    } else if bytes_f >= MB {
+        format!("{:.1}M", bytes_f / MB)
+    } else if bytes_f >= KB {
+        format!("{:.1}K", bytes_f / KB)
+    } else {
+        format!("{}B", bytes)
+    }
+}
+
 /// Command-line arguments for the stop tool.
 #[derive(Parser, Debug)]
 #[command(name = "stop")]
@@ -358,22 +377,22 @@ pub fn output_human_readable(
     if verbose {
         writeln!(
             stdout,
-            "{:<8} {:<20} {:>8} {:>8} {:>7} {:>10} {:>10} {:>7}",
-            "Pid".bold(),
+            "{:<8} {:<20} {:>8} {:>8} {:>7} {:>9} {:>9} {:>7}",
+            "PID".bold(),
             "Name".bold(),
             "CPU%".bold(),
             "Mem%".bold(),
             "Threads".bold(),
-            "Read MB".bold(),
-            "Write MB".bold(),
+            "Read".bold(),
+            "Write".bold(),
             "Files".bold()
         )?;
-        writeln!(stdout, "{}", "─".repeat(100).dimmed())?;
+        writeln!(stdout, "{}", "─".repeat(95).dimmed())?;
     } else {
         writeln!(
             stdout,
             "{:<8} {:<20} {:>8} {:>8} {:<10}",
-            "Pid".bold(),
+            "PID".bold(),
             "Name".bold(),
             "CPU%".bold(),
             "Mem%".bold(),
@@ -404,8 +423,8 @@ pub fn output_human_readable(
         };
 
         if verbose {
-            let disk_read_mb = process.disk_read_bytes as f64 / 1024.0 / 1024.0;
-            let disk_write_mb = process.disk_write_bytes as f64 / 1024.0 / 1024.0;
+            let disk_read = format_bytes(process.disk_read_bytes);
+            let disk_write = format_bytes(process.disk_write_bytes);
             let open_files_str = process
                 .open_files
                 .map(|f| f.to_string())
@@ -413,14 +432,14 @@ pub fn output_human_readable(
 
             writeln!(
                 stdout,
-                "{:<8} {:<20} {} {} {:>7} {:>10.1} {:>10.1} {:>7}",
+                "{:<8} {:<20} {} {} {:>7} {:>9} {:>9} {:>7}",
                 process.pid.to_string().cyan(),
                 &process.name[..process.name.len().min(20)],
                 cpu_display,
                 mem_display,
                 process.thread_count,
-                disk_read_mb,
-                disk_write_mb,
+                disk_read,
+                disk_write,
                 open_files_str
             )?;
         } else {
