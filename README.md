@@ -26,8 +26,9 @@ Traditional monitoring tools are designed for humans:
 ✅ Filter, sort, limit processes (with AND/OR logic)
 ✅ JSON/CSV/human-readable output
 ✅ Advanced metrics: thread count, disk I/O, open file descriptors
-✅ 50 tests passing (16 unit + 19 edge case + 15 integration)
+✅ 52 tests passing (16 unit + 19 edge case + 17 integration)
 ✅ Zero clippy warnings
+✅ CI/CD pipeline (GitHub Actions on Ubuntu and macOS)
 ✅ Tested on macOS and Linux (Fedora)
 ✅ Performance optimized (86% allocation reduction in watch mode)
 
@@ -331,7 +332,7 @@ stop --filter "cpu > 80 and name == myapp" --json | \
 ## Development
 
 ```bash
-# Run tests (50 tests: 16 unit + 19 edge case + 15 integration)
+# Run tests (52 tests: 16 unit + 19 edge case + 17 integration)
 cargo test
 
 # Check code quality
@@ -363,8 +364,9 @@ cargo install --path .
 **Testing:**
 - 16 unit tests (filter parsing, compound expressions, edge cases)
 - 19 edge case tests (unicode, special chars, error conditions)
-- 15 integration tests (CLI, output formats, Phase 3 features)
-- All 50 tests passing, zero clippy warnings
+- 17 integration tests (CLI, output formats, Phase 3 features, broken pipe handling)
+- All 52 tests passing, zero clippy warnings
+- CI/CD with GitHub Actions (Ubuntu and macOS)
 - Performance profiled: 29ms overhead, 86% allocation reduction in watch mode
 
 ## Known Limitations
