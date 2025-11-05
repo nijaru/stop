@@ -17,7 +17,9 @@ const CPU_SAMPLE_INTERVAL_MS: u64 = 200;
 /// Default number of processes to show when --top-n is not specified.
 const DEFAULT_TOP_N: usize = 20;
 
-/// Format bytes into human-readable string (B, KB, MB, GB).
+/// Format bytes into human-readable string with colored unit suffix.
+/// Returns a string with the number and unit separated by a space,
+/// with the unit dimmed for visual distinction.
 fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = 1024.0 * 1024.0;
@@ -26,13 +28,13 @@ fn format_bytes(bytes: u64) -> String {
     let bytes_f = bytes as f64;
 
     if bytes_f >= GB {
-        format!("{:.1}G", bytes_f / GB)
+        format!("{:.1} {}", bytes_f / GB, "G".dimmed())
     } else if bytes_f >= MB {
-        format!("{:.1}M", bytes_f / MB)
+        format!("{:.1} {}", bytes_f / MB, "M".dimmed())
     } else if bytes_f >= KB {
-        format!("{:.1}K", bytes_f / KB)
+        format!("{:.1} {}", bytes_f / KB, "K".dimmed())
     } else {
-        format!("{}B", bytes)
+        format!("{} {}", bytes, "B".dimmed())
     }
 }
 
@@ -377,7 +379,7 @@ pub fn output_human_readable(
     if verbose {
         writeln!(
             stdout,
-            "{:<8} {:<20} {:>8} {:>8} {:>7} {:>9} {:>9} {:>7}",
+            "{:<8} {:<20} {:>8} {:>8} {:>7} {:>10} {:>10} {:>7}",
             "PID".bold(),
             "Name".bold(),
             "CPU%".bold(),
@@ -387,7 +389,7 @@ pub fn output_human_readable(
             "Write".bold(),
             "Files".bold()
         )?;
-        writeln!(stdout, "{}", "─".repeat(95).dimmed())?;
+        writeln!(stdout, "{}", "─".repeat(98).dimmed())?;
     } else {
         writeln!(
             stdout,
@@ -432,7 +434,7 @@ pub fn output_human_readable(
 
             writeln!(
                 stdout,
-                "{:<8} {:<20} {} {} {:>7} {:>9} {:>9} {:>7}",
+                "{:<8} {:<20} {} {} {:>7} {:>10} {:>10} {:>7}",
                 process.pid.to_string().cyan(),
                 &process.name[..process.name.len().min(20)],
                 cpu_display,
