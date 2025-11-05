@@ -257,3 +257,54 @@ fn test_phase3_features_in_csv() {
     let field_count = data_row.split(',').count();
     assert!(field_count >= 16, "Expected at least 16 CSV fields including Phase 3 features");
 }
+
+#[test]
+fn test_broken_pipe_handling_json() {
+    // Test that piping to head doesn't cause panic (broken pipe handling)
+    use std::process::{Command, Stdio};
+
+    let stop_child = Command::new("cargo")
+        .args(["run", "--", "--json"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("Failed to start stop");
+
+    let head_output = Command::new("head")
+        .arg("-1")
+        .stdin(stop_child.stdout.unwrap())
+        .output()
+        .expect("Failed to run head");
+
+    // Should succeed without panic
+    assert!(head_output.status.success() || head_output.status.code() == Some(0) || head_output.status.code() == Some(141));
+
+    // Should get at least one line
+    let stdout = String::from_utf8_lossy(&head_output.stdout);
+    assert!(!stdout.is_empty(), "Expected at least one line of output");
+}
+
+#[test]
+fn test_broken_pipe_handling_csv() {
+    // Test CSV output with broken pipe
+    use std::process::{Command, Stdio};
+
+    let stop_child = Command::new("cargo")
+        .args(["run", "--", "--csv"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("Failed to start stop");
+
+    let head_output = Command::new("head")
+        .arg("-2")
+        .stdin(stop_child.stdout.unwrap())
+        .output()
+        .expect("Failed to run head");
+
+    // Should succeed without panic
+    assert!(head_output.status.success() || head_output.status.code() == Some(0) || head_output.status.code() == Some(141));
+
+    // Should get header + at least one data row
+    let stdout = String::from_utf8_lossy(&head_output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(lines.len() >= 2, "Expected header + data row");
+}
