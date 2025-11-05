@@ -216,17 +216,41 @@ fn test_phase3_features_in_json() {
     let process = &processes[0];
 
     // Check Phase 3 features exist
-    assert!(process.get("thread_count").is_some(), "Missing thread_count field");
-    assert!(process.get("disk_read_bytes").is_some(), "Missing disk_read_bytes field");
-    assert!(process.get("disk_write_bytes").is_some(), "Missing disk_write_bytes field");
-    assert!(process.get("open_files").is_some(), "Missing open_files field");
+    assert!(
+        process.get("thread_count").is_some(),
+        "Missing thread_count field"
+    );
+    assert!(
+        process.get("disk_read_bytes").is_some(),
+        "Missing disk_read_bytes field"
+    );
+    assert!(
+        process.get("disk_write_bytes").is_some(),
+        "Missing disk_write_bytes field"
+    );
+    assert!(
+        process.get("open_files").is_some(),
+        "Missing open_files field"
+    );
 
     // Verify types and reasonable values
-    assert!(process["thread_count"].is_number(), "thread_count should be a number");
-    assert!(process["thread_count"].as_u64().unwrap() > 0, "thread_count should be positive");
+    assert!(
+        process["thread_count"].is_number(),
+        "thread_count should be a number"
+    );
+    assert!(
+        process["thread_count"].as_u64().unwrap() > 0,
+        "thread_count should be positive"
+    );
 
-    assert!(process["disk_read_bytes"].is_number(), "disk_read_bytes should be a number");
-    assert!(process["disk_write_bytes"].is_number(), "disk_write_bytes should be a number");
+    assert!(
+        process["disk_read_bytes"].is_number(),
+        "disk_read_bytes should be a number"
+    );
+    assert!(
+        process["disk_write_bytes"].is_number(),
+        "disk_write_bytes should be a number"
+    );
 
     // open_files can be null for privileged processes, or a number
     assert!(
@@ -243,19 +267,37 @@ fn test_phase3_features_in_csv() {
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     let lines: Vec<&str> = stdout.lines().collect();
 
-    assert!(lines.len() >= 2, "Expected header and at least one data row");
+    assert!(
+        lines.len() >= 2,
+        "Expected header and at least one data row"
+    );
 
     // Check CSV header includes Phase 3 fields
     let header = lines[0];
-    assert!(header.contains("thread_count"), "CSV header missing thread_count");
-    assert!(header.contains("disk_read_bytes"), "CSV header missing disk_read_bytes");
-    assert!(header.contains("disk_write_bytes"), "CSV header missing disk_write_bytes");
-    assert!(header.contains("open_files"), "CSV header missing open_files");
+    assert!(
+        header.contains("thread_count"),
+        "CSV header missing thread_count"
+    );
+    assert!(
+        header.contains("disk_read_bytes"),
+        "CSV header missing disk_read_bytes"
+    );
+    assert!(
+        header.contains("disk_write_bytes"),
+        "CSV header missing disk_write_bytes"
+    );
+    assert!(
+        header.contains("open_files"),
+        "CSV header missing open_files"
+    );
 
     // Check data row has these fields (verify by counting commas)
     let data_row = lines[1];
     let field_count = data_row.split(',').count();
-    assert!(field_count >= 16, "Expected at least 16 CSV fields including Phase 3 features");
+    assert!(
+        field_count >= 16,
+        "Expected at least 16 CSV fields including Phase 3 features"
+    );
 }
 
 #[test]
@@ -276,7 +318,11 @@ fn test_broken_pipe_handling_json() {
         .expect("Failed to run head");
 
     // Should succeed without panic
-    assert!(head_output.status.success() || head_output.status.code() == Some(0) || head_output.status.code() == Some(141));
+    assert!(
+        head_output.status.success()
+            || head_output.status.code() == Some(0)
+            || head_output.status.code() == Some(141)
+    );
 
     // Should get at least one line
     let stdout = String::from_utf8_lossy(&head_output.stdout);
@@ -301,7 +347,11 @@ fn test_broken_pipe_handling_csv() {
         .expect("Failed to run head");
 
     // Should succeed without panic
-    assert!(head_output.status.success() || head_output.status.code() == Some(0) || head_output.status.code() == Some(141));
+    assert!(
+        head_output.status.success()
+            || head_output.status.code() == Some(0)
+            || head_output.status.code() == Some(141)
+    );
 
     // Should get header + at least one data row
     let stdout = String::from_utf8_lossy(&head_output.stdout);

@@ -1,7 +1,10 @@
-use crate::{collect_snapshot, filter::FilterExpr, output_csv_header, output_csv_rows, output_human_readable, sort_processes, Args, DEFAULT_TOP_N};
-use crossterm::{cursor, terminal, ExecutableCommand};
+use crate::{
+    Args, DEFAULT_TOP_N, collect_snapshot, filter::FilterExpr, output_csv_header, output_csv_rows,
+    output_human_readable, sort_processes,
+};
+use crossterm::{ExecutableCommand, cursor, terminal};
 use std::error::Error;
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::time::Duration;
 
 /// Runs continuous monitoring mode, refreshing data at the specified interval.

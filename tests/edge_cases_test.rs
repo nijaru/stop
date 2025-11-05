@@ -120,10 +120,7 @@ fn test_csv_with_filter() {
 fn test_conflicting_output_formats() {
     let mut cmd = Command::cargo_bin("stop").unwrap();
     // Both --json and --csv shouldn't cause crash (undefined behavior but shouldn't panic)
-    cmd.arg("--json")
-        .arg("--csv")
-        .assert()
-        .success(); // Currently no validation, just takes last one
+    cmd.arg("--json").arg("--csv").assert().success(); // Currently no validation, just takes last one
 }
 
 #[test]
@@ -206,8 +203,8 @@ fn test_json_output_is_valid() {
 
     // Verify JSON is parseable
     let json_str = String::from_utf8(output.stdout).unwrap();
-    let _: serde_json::Value = serde_json::from_str(&json_str)
-        .expect("Output should be valid JSON");
+    let _: serde_json::Value =
+        serde_json::from_str(&json_str).expect("Output should be valid JSON");
 }
 
 #[test]
@@ -221,5 +218,9 @@ fn test_csv_output_row_count() {
     let lines: Vec<&str> = csv_str.lines().collect();
 
     // Should have header + 3 data rows = 4 lines minimum
-    assert!(lines.len() >= 4, "Expected at least 4 lines (header + 3 processes), got {}", lines.len());
+    assert!(
+        lines.len() >= 4,
+        "Expected at least 4 lines (header + 3 processes), got {}",
+        lines.len()
+    );
 }

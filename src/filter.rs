@@ -149,9 +149,17 @@ fn find_keyword(s: &str, keyword: &str) -> Option<usize> {
         let actual_pos = pos + found;
 
         // Check if it's a whole word (surrounded by spaces or boundaries)
-        let before_ok = actual_pos == 0 || s_lower.chars().nth(actual_pos - 1).is_none_or(|c| c.is_whitespace());
+        let before_ok = actual_pos == 0
+            || s_lower
+                .chars()
+                .nth(actual_pos - 1)
+                .is_none_or(|c| c.is_whitespace());
         let after_pos = actual_pos + keyword_lower.len();
-        let after_ok = after_pos >= s_lower.len() || s_lower.chars().nth(after_pos).is_none_or(|c| c.is_whitespace());
+        let after_ok = after_pos >= s_lower.len()
+            || s_lower
+                .chars()
+                .nth(after_pos)
+                .is_none_or(|c| c.is_whitespace());
 
         if before_ok && after_ok {
             return Some(actual_pos);
@@ -302,7 +310,10 @@ impl Filter {
             FilterField::Name | FilterField::User => {
                 let original = value_str.to_string();
                 let lowercase = original.to_lowercase();
-                FilterValue::String { original, lowercase }
+                FilterValue::String {
+                    original,
+                    lowercase,
+                }
             }
         };
 
@@ -340,8 +351,12 @@ impl Filter {
                 !process.name.to_lowercase().contains(lowercase)
             }
             // User matching (exact match, case-sensitive)
-            (FilterField::User, FilterValue::String { original, .. }, FilterOp::Eq) => &process.user == original,
-            (FilterField::User, FilterValue::String { original, .. }, FilterOp::Ne) => &process.user != original,
+            (FilterField::User, FilterValue::String { original, .. }, FilterOp::Eq) => {
+                &process.user == original
+            }
+            (FilterField::User, FilterValue::String { original, .. }, FilterOp::Ne) => {
+                &process.user != original
+            }
             // Invalid combinations (should be caught during parsing)
             _ => false,
         }
@@ -380,7 +395,9 @@ mod tests {
         if let FilterExpr::Simple(filter) = expr {
             assert!(matches!(filter.field, FilterField::Cpu));
             assert!(matches!(filter.op, FilterOp::Gt));
-            assert!(matches!(filter.value, FilterValue::Float(v) if (v - 10.0).abs() < f32::EPSILON));
+            assert!(
+                matches!(filter.value, FilterValue::Float(v) if (v - 10.0).abs() < f32::EPSILON)
+            );
         } else {
             panic!("Expected FilterExpr::Simple");
         }

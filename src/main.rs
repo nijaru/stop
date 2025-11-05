@@ -41,7 +41,11 @@ pub struct Args {
     #[arg(long, help = "Watch mode (continuous updates)")]
     pub watch: bool,
 
-    #[arg(long, help = "Update interval in seconds for watch mode", default_value_t = 2.0)]
+    #[arg(
+        long,
+        help = "Update interval in seconds for watch mode",
+        default_value_t = 2.0
+    )]
     pub interval: f64,
 }
 
@@ -126,7 +130,8 @@ pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
                 .collect();
 
             let disk_usage = process.disk_usage();
-            let (disk_read, disk_write) = (disk_usage.total_read_bytes, disk_usage.total_written_bytes);
+            let (disk_read, disk_write) =
+                (disk_usage.total_read_bytes, disk_usage.total_written_bytes);
 
             ProcessInfo {
                 pid: pid.as_u32(),
@@ -194,7 +199,10 @@ pub fn output_csv_header() -> io::Result<()> {
 pub fn output_csv_rows(snapshot: &SystemSnapshot) -> io::Result<()> {
     let mut stdout = io::stdout();
     for process in &snapshot.processes {
-        let open_files_str = process.open_files.map(|n| n.to_string()).unwrap_or_default();
+        let open_files_str = process
+            .open_files
+            .map(|n| n.to_string())
+            .unwrap_or_default();
         writeln!(
             stdout,
             "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
@@ -402,7 +410,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                         "expression": filter_expr_str,
                     });
                     // Ignore broken pipe on error output since we're exiting anyway
-                    let _ = writeln!(io::stdout(), "{}", serde_json::to_string_pretty(&error_json)?);
+                    let _ = writeln!(
+                        io::stdout(),
+                        "{}",
+                        serde_json::to_string_pretty(&error_json)?
+                    );
                 } else {
                     eprintln!("Error: {e}");
                     eprintln!("Expression: {filter_expr_str}");
