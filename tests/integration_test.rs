@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 use serde_json::Value;
@@ -305,17 +307,21 @@ fn test_broken_pipe_handling_json() {
     // Test that piping to head doesn't cause panic (broken pipe handling)
     use std::process::{Command, Stdio};
 
-    let stop_child = Command::new("cargo")
+    let mut stop_child = Command::new("cargo")
         .args(["run", "--", "--json"])
         .stdout(Stdio::piped())
         .spawn()
         .expect("Failed to start stop");
 
+    let stop_stdout = stop_child.stdout.take().unwrap();
     let head_output = Command::new("head")
         .arg("-1")
-        .stdin(stop_child.stdout.unwrap())
+        .stdin(stop_stdout)
         .output()
         .expect("Failed to run head");
+
+    // Wait for stop to exit gracefully (broken pipe should cause clean exit)
+    let _ = stop_child.wait();
 
     // Should succeed without panic
     assert!(
@@ -334,17 +340,21 @@ fn test_broken_pipe_handling_csv() {
     // Test CSV output with broken pipe
     use std::process::{Command, Stdio};
 
-    let stop_child = Command::new("cargo")
+    let mut stop_child = Command::new("cargo")
         .args(["run", "--", "--csv"])
         .stdout(Stdio::piped())
         .spawn()
         .expect("Failed to start stop");
 
+    let stop_stdout = stop_child.stdout.take().unwrap();
     let head_output = Command::new("head")
         .arg("-2")
-        .stdin(stop_child.stdout.unwrap())
+        .stdin(stop_stdout)
         .output()
         .expect("Failed to run head");
+
+    // Wait for stop to exit gracefully (broken pipe should cause clean exit)
+    let _ = stop_child.wait();
 
     // Should succeed without panic
     assert!(
