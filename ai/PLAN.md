@@ -3,8 +3,6 @@
 ## Goal
 Build a production-ready, cross-platform system monitoring tool with structured JSON output optimized for AI agents and automation.
 
-**Target**: v1.0.0 by Q2 2025
-
 ## Current State (v0.0.1)
 
 **Completed**: Phases 1, 2, 3, and 4
@@ -20,15 +18,15 @@ Build a production-ready, cross-platform system monitoring tool with structured 
 
 **Next**: Field testing, consider version bump to 0.1.0
 
-## Milestones
+## Phases
 
-| Phase | Timeline | Status | Deliverables | Success Criteria |
-|-------|----------|--------|--------------|------------------|
-| Phase 1: MVP | Jan 2025 | ✅ COMPLETE | Filter, sort, tests, improved output | All CLI flags functional, test coverage >80% |
-| Phase 2: Query & Filter | Feb 2025 | ✅ COMPLETE | Multiple conditions (AND/OR), CSV output | Complex queries work, CSV RFC 4180 compliant |
-| Phase 3: Advanced Monitoring | Mar 2025 | ✅ COMPLETE | Thread count, disk I/O, open files | Metrics accurate on macOS/Linux |
-| Phase 4: Watch Mode | Feb 2025 | ✅ COMPLETE | Continuous monitoring, NDJSON | <100ms overhead, configurable interval |
-| Phase 5: Production | Q2 2025 | Planned | Stable API, Windows support, publish | Published to crates.io, CI/CD complete |
+| Phase | Status | Deliverables | Success Criteria |
+|-------|--------|--------------|------------------|
+| Phase 1: MVP | ✅ COMPLETE | Filter, sort, tests, improved output | All CLI flags functional, test coverage >80% |
+| Phase 2: Query & Filter | ✅ COMPLETE | Multiple conditions (AND/OR), CSV output | Complex queries work, CSV RFC 4180 compliant |
+| Phase 3: Advanced Monitoring | ✅ COMPLETE | Thread count, disk I/O, open files | Metrics accurate on macOS/Linux |
+| Phase 4: Watch Mode | ✅ COMPLETE | Continuous monitoring, NDJSON | <100ms overhead, configurable interval |
+| Phase 5: Production | Planned | Stable API, Windows support, publish | Published to crates.io, CI/CD complete |
 
 ## Critical Dependencies
 

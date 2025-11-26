@@ -2,11 +2,11 @@
 
 ## Current State
 
-**Version**: v0.0.1-alpha (RELEASED)
+**Version**: v0.0.1-beta (Unreleased)
 **Crate**: stop-cli (published to crates.io)
 **Binary**: stop
-**Phase**: Alpha release - field testing
-**Last Updated**: 2025-11-05
+**Phase**: Bug fixing - 3 critical issues found in code review
+**Last Updated**: 2025-11-20
 
 ## What Works
 
@@ -39,13 +39,15 @@
 - ⚠️ Network metrics (DEFERRED - sysinfo doesn't support per-process)
 
 **Code Quality:**
-- ✅ 52 tests (16 unit + 17 integration + 19 edge cases), all passing
+- ✅ 59 tests (16 unit + 24 integration + 19 edge cases), all passing (+7 new tests)
 - ✅ CI/CD pipeline (GitHub Actions on Ubuntu and macOS)
 - ✅ Zero clippy warnings
-- ✅ Proper error handling with thiserror
+- ✅ Custom StopError type for better error handling
 - ✅ Type-safe filter module with parse-time validation
 - ✅ Cross-platform data collection (sysinfo)
-- ✅ Performance optimized for watch mode
+- ✅ Performance optimized (BufWriter, pre-allocation, efficient CSV escaping)
+- ✅ Comprehensive module-level and function documentation
+- ✅ Stable Rust compatibility (no nightly features)
 
 **Performance (Tested & Optimized):**
 - ✅ Single snapshot: 231ms (200ms required sleep + 31ms overhead)
@@ -59,6 +61,55 @@
 - ❌ Per-process network metrics (sysinfo limitation - see ai/research/network-metrics.md)
 - ❌ Parentheses for complex filter grouping (not needed yet)
 - ❌ Windows testing (untested, but should work)
+
+## 🔴 Critical Issues Found (Code Review 2025-11-20)
+
+**Must Fix Before Any Release**:
+1. **UTF-8 string slicing** (`src/main.rs:533, 542, 548`) - Will panic on non-ASCII process names (emoji, Chinese, etc.)
+2. **Division by zero** (`src/main.rs:205, 229`) - No guard when `total_memory == 0` (containers, embedded)
+3. **Interval validation** (`src/main.rs:500`) - Doesn't check NaN/Infinity, can cause infinite loops
+
+**See**: `ai/research/critical-code-review-2025-11-20.md` for full analysis (18 issues total: 4 critical, 6 high, 5 medium, 3 low)
+
+## Recent Changes
+
+### Comprehensive Code Review & Optimization (2025-11-20)
+**Summary**: Implemented all 15 recommended improvements from code review
+
+**Performance Optimizations**:
+- ✅ BufWriter for CSV output (10-30% faster)
+- ✅ Optimized CSV escaping with bytes().any()
+- ✅ Pre-allocated process vector capacity
+- ✅ Extracted constants to module level
+
+**Code Quality**:
+- ✅ Fixed stable Rust compatibility (map_or instead of is_none_or)
+- ✅ Created custom StopError type (replaced Box<dyn Error>)
+- ✅ Simplified operator parsing logic
+- ✅ Added #[must_use] attributes to pure functions
+- ✅ Improved filter error messages with suggestions
+- ✅ Added interval validation
+
+**Documentation**:
+- ✅ Module-level documentation for all modules
+- ✅ Doc comment examples for key functions
+- ✅ Comprehensive improvement summary
+
+**Testing**:
+- ✅ Added 7 new integration tests
+- ✅ Watch mode NDJSON validation
+- ✅ Verbose mode output validation
+- ✅ Search functionality tests
+- ✅ All 59 tests passing
+
+**Files Modified**:
+- src/main.rs (performance, docs, BufWriter)
+- src/filter.rs (stable Rust, error suggestions)
+- src/watch.rs (BufWriter support)
+- src/error.rs (NEW - custom error type)
+- tests/integration_test.rs (+7 tests)
+
+See: ai/research/code-review-improvements-2025-11-20.md
 
 ## Recent Changes
 
@@ -205,10 +256,12 @@
 - ✅ Zero/huge top-n values
 - ✅ Invalid sort fields
 
-**No Known Bugs:**
-- All 48 tests passing
-- Zero clippy warnings
-- Extensive edge case testing complete
+**Known Bugs (Critical)**:
+- UTF-8 panic on non-ASCII process names (slicing by byte index)
+- Potential div-by-zero in memory percent calculation
+- NaN/Infinity interval values not rejected
+
+**All 59 tests passing** (but missing UTF-8 edge case tests)
 
 ## Performance
 
@@ -233,9 +286,9 @@
 
 ```
 Unit tests:        16 passing (filter parsing logic)
-Integration tests: 17 passing (CLI behavior, broken pipe handling)
+Integration tests: 24 passing (CLI behavior, broken pipe, watch, verbose)
 Edge case tests:   19 passing (error conditions, edge cases)
-Total:             52 tests passing
+Total:             59 tests passing
 ```
 
 **Test execution time**: <1s for full suite
@@ -266,6 +319,8 @@ Total:             52 tests passing
 - ai/research/comprehensive-testing-summary.md - Test results
 - ai/research/code-review.md - Comprehensive code review
 - ai/research/optimization-results.md - Optimization results
+- ai/research/code-review-improvements-2025-11-20.md - Optimization pass (15 improvements)
+- ai/research/critical-code-review-2025-11-20.md - Critical bug analysis (18 issues found)
 
 **User Documentation:**
 - README.md - User-facing documentation
