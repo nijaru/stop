@@ -1,3 +1,29 @@
+//! Filter expression parsing and evaluation for process queries.
+//!
+//! This module provides type-safe filter parsing with comprehensive validation.
+//! Filters are parsed at compile-time (not eval-time) to catch errors early.
+//!
+//! # Filter Syntax
+//!
+//! - **Fields**: cpu, mem, pid, name, user
+//! - **Operators**: >, >=, <, <=, ==, !=
+//! - **Logic**: and, or (case-insensitive)
+//!
+//! # Examples
+//!
+//! ```ignore
+//! use stop::filter::FilterExpr;
+//!
+//! // Simple filter
+//! let expr = FilterExpr::parse("cpu > 10")?;
+//!
+//! // Compound filter with AND
+//! let expr = FilterExpr::parse("cpu > 10 and mem > 5")?;
+//!
+//! // Compound filter with OR
+//! let expr = FilterExpr::parse("name == chrome or name == firefox")?;
+//! ```
+
 use thiserror::Error;
 
 /// Errors that can occur during filter parsing or evaluation.
@@ -81,7 +107,18 @@ impl FilterField {
             "pid" => Ok(Self::Pid),
             "name" => Ok(Self::Name),
             "user" => Ok(Self::User),
-            _ => Err(FilterError::UnknownField(s.to_string())),
+            _ => {
+                // Provide helpful suggestions for common mistakes
+                let suggestion = match s.to_lowercase().as_str() {
+                    "memory" => " (use 'mem' or 'memory')",
+                    "process" => " (did you mean 'pid' or 'name'?)",
+                    "command" | "cmd" => " (did you mean 'name'?)",
+                    "username" => " (did you mean 'user'?)",
+                    "id" => " (did you mean 'pid'?)",
+                    _ => "",
+                };
+                Err(FilterError::UnknownField(format!("{}{}", s, suggestion)))
+            }
         }
     }
 
@@ -226,6 +263,7 @@ impl FilterExpr {
     /// # Returns
     ///
     /// `true` if the process matches the filter expression, `false` otherwise.
+    #[must_use]
     pub fn matches(&self, process: &crate::ProcessInfo) -> bool {
         match self {
             FilterExpr::Simple(f) => f.matches(process),
@@ -329,6 +367,17 @@ impl Filter {
     /// # Returns
     ///
     /// `true` if the process matches the filter condition, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use stop::filter::Filter;
+    ///
+    /// let filter = Filter::parse_simple("cpu > 50")?;
+    /// let process = /* create process with cpu_percent = 75 */;
+    ///
+    /// assert!(filter.matches(&process));
+    /// ```
     pub fn matches(&self, process: &crate::ProcessInfo) -> bool {
         match (&self.field, &self.value, &self.op) {
             // CPU comparisons

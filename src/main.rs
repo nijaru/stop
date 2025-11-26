@@ -1,13 +1,41 @@
+//! Process and system monitoring with structured output.
+//!
+//! This tool provides cross-platform system metrics collection with support for
+//! filtering, sorting, and multiple output formats (JSON, CSV, human-readable).
+//!
+//! # Features
+//!
+//! - **Structured output**: JSON and CSV for easy parsing
+//! - **Powerful filtering**: Simple syntax with AND/OR logic
+//! - **Watch mode**: Continuous monitoring with configurable intervals
+//! - **Advanced metrics**: Thread count, disk I/O, open file descriptors
+//!
+//! # Example
+//!
+//! ```ignore
+//! // Collect system snapshot
+//! let snapshot = collect_snapshot()?;
+//!
+//! // Filter and sort processes
+//! let filter = FilterExpr::parse("cpu > 10 and mem > 5")?;
+//! let mut filtered: Vec<_> = snapshot.processes
+//!     .into_iter()
+//!     .filter(|p| filter.matches(p))
+//!     .collect();
+//! sort_processes(&mut filtered, "cpu");
+//! ```
+
+mod error;
 mod filter;
 mod watch;
 
 use clap::Parser;
+use error::StopError;
 use filter::FilterExpr;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use std::error::Error;
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Write};
 use sysinfo::System;
 
 /// Minimum interval for CPU usage calculation (milliseconds).
@@ -17,14 +45,15 @@ const CPU_SAMPLE_INTERVAL_MS: u64 = 200;
 /// Default number of processes to show when --top-n is not specified.
 const DEFAULT_TOP_N: usize = 20;
 
+/// Byte size constants for human-readable formatting.
+const KB: f64 = 1024.0;
+const MB: f64 = 1024.0 * 1024.0;
+const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+const TB: f64 = 1024.0 * 1024.0 * 1024.0 * 1024.0;
+
 /// Format bytes into human-readable string with colored unit suffix.
 /// Returns a tuple of (value_string, unit_string) for proper alignment.
 fn format_bytes_parts(bytes: u64) -> (String, String) {
-    const KB: f64 = 1024.0;
-    const MB: f64 = 1024.0 * 1024.0;
-    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
-    const TB: f64 = 1024.0 * 1024.0 * 1024.0 * 1024.0;
-
     let bytes_f = bytes as f64;
 
     if bytes_f >= TB {
@@ -165,7 +194,7 @@ pub struct ProcessInfo {
 /// # Errors
 ///
 /// Returns error if system information collection fails.
-pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
+pub fn collect_snapshot() -> Result<SystemSnapshot, StopError> {
     let mut sys = System::new_all();
 
     std::thread::sleep(std::time::Duration::from_millis(CPU_SAMPLE_INTERVAL_MS));
@@ -177,10 +206,11 @@ pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
 
     let global_cpu_usage = sys.global_cpu_usage();
 
-    let processes: Vec<ProcessInfo> = sys
-        .processes()
-        .iter()
-        .map(|(pid, process)| {
+    let process_count = sys.processes().len();
+    let mut processes = Vec::with_capacity(process_count);
+
+    for (pid, process) in sys.processes().iter() {
+        processes.push({
             let cmd_vec: Vec<String> = process
                 .cmd()
                 .iter()
@@ -207,8 +237,8 @@ pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
                 disk_write_bytes: disk_write,
                 open_files: process.open_files(),
             }
-        })
-        .collect();
+        });
+    }
 
     Ok(SystemSnapshot {
         timestamp: chrono::Utc::now().to_rfc3339(),
@@ -227,9 +257,29 @@ pub fn collect_snapshot() -> Result<SystemSnapshot, Box<dyn Error>> {
 /// Wraps field in quotes and escapes internal quotes if the field contains
 /// commas, quotes, or newlines. Returns a borrowed reference if no escaping is needed,
 /// avoiding unnecessary allocations.
+///
+/// # Examples
+///
+/// ```ignore
+/// use stop::escape_csv_field;
+///
+/// // No escaping needed
+/// assert_eq!(escape_csv_field("simple"), "simple");
+///
+/// // Escapes commas
+/// assert_eq!(escape_csv_field("foo,bar"), "\"foo,bar\"");
+///
+/// // Escapes quotes
+/// assert_eq!(escape_csv_field("foo\"bar"), "\"foo\"\"bar\"");
+///
+/// // Escapes newlines
+/// assert_eq!(escape_csv_field("foo\nbar"), "\"foo\nbar\"");
+/// ```
+#[must_use]
 pub fn escape_csv_field(field: &str) -> Cow<'_, str> {
     // RFC 4180: If field contains comma, quote, or newline, wrap in quotes and escape quotes
-    if field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r') {
+    // Use bytes().any() for efficient short-circuit evaluation
+    if field.bytes().any(|b| matches!(b, b',' | b'"' | b'\n' | b'\r')) {
         Cow::Owned(format!("\"{}\"", field.replace('"', "\"\"")))
     } else {
         Cow::Borrowed(field)
@@ -241,12 +291,12 @@ pub fn escape_csv_field(field: &str) -> Cow<'_, str> {
 /// # Errors
 ///
 /// Returns error if writing to stdout fails.
-pub fn output_csv_header() -> io::Result<()> {
+pub fn output_csv_header<W: Write>(writer: &mut W) -> io::Result<()> {
     writeln!(
-        io::stdout(),
+        writer,
         "timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command,thread_count,disk_read_bytes,disk_write_bytes,open_files"
     )?;
-    io::stdout().flush()
+    writer.flush()
 }
 
 /// Outputs CSV rows for all processes in the snapshot.
@@ -254,15 +304,14 @@ pub fn output_csv_header() -> io::Result<()> {
 /// # Errors
 ///
 /// Returns error if writing to stdout fails.
-pub fn output_csv_rows(snapshot: &SystemSnapshot) -> io::Result<()> {
-    let mut stdout = io::stdout();
+pub fn output_csv_rows<W: Write>(writer: &mut W, snapshot: &SystemSnapshot) -> io::Result<()> {
     for process in &snapshot.processes {
         let open_files_str = process
             .open_files
             .map(|n| n.to_string())
             .unwrap_or_default();
         writeln!(
-            stdout,
+            writer,
             "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             escape_csv_field(&snapshot.timestamp),
             snapshot.system.cpu_usage,
@@ -282,12 +331,13 @@ pub fn output_csv_rows(snapshot: &SystemSnapshot) -> io::Result<()> {
             open_files_str
         )?;
     }
-    stdout.flush()
+    writer.flush()
 }
 
 fn output_csv(snapshot: &SystemSnapshot) -> io::Result<()> {
-    output_csv_header()?;
-    output_csv_rows(snapshot)
+    let mut writer = BufWriter::new(io::stdout());
+    output_csv_header(&mut writer)?;
+    output_csv_rows(&mut writer, snapshot)
 }
 
 /// Sorts processes in-place by the specified metric.
@@ -298,6 +348,24 @@ fn output_csv(snapshot: &SystemSnapshot) -> io::Result<()> {
 /// * `sort_by` - Sort key: "cpu", "mem"/"memory", "pid", or "name" (case-insensitive)
 ///
 /// Defaults to CPU descending if an unknown sort key is provided.
+///
+/// # Examples
+///
+/// ```ignore
+/// let mut processes = vec![/* ... */];
+///
+/// // Sort by CPU (descending)
+/// sort_processes(&mut processes, "cpu");
+/// assert!(processes[0].cpu_percent >= processes[1].cpu_percent);
+///
+/// // Sort by memory (descending)
+/// sort_processes(&mut processes, "mem");
+/// assert!(processes[0].memory_percent >= processes[1].memory_percent);
+///
+/// // Sort by PID (ascending)
+/// sort_processes(&mut processes, "pid");
+/// assert!(processes[0].pid <= processes[1].pid);
+/// ```
 pub fn sort_processes(processes: &mut [ProcessInfo], sort_by: &str) {
     match sort_by.to_lowercase().as_str() {
         "cpu" => processes.sort_by(|a, b| {
@@ -487,10 +555,13 @@ pub fn output_human_readable(
     stdout.flush()
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), StopError> {
     let args = Args::parse();
 
     // Validate interval
+    if args.interval < 0.0 {
+        return Err(StopError::config("Interval must be positive"));
+    }
     if args.interval < 0.2 {
         eprintln!("Warning: Interval below 0.2s may cause high CPU usage");
     }

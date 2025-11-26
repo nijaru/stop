@@ -371,3 +371,201 @@ fn test_broken_pipe_handling_csv() {
     let lines: Vec<&str> = stdout.lines().collect();
     assert!(lines.len() >= 2, "Expected header + data row");
 }
+
+#[test]
+fn test_verbose_mode_output() {
+    let mut cmd = Command::cargo_bin("stop").unwrap();
+    let output = cmd
+        .arg("--verbose")
+        .arg("--top-n")
+        .arg("1")
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+
+    // Check for verbose-only headers
+    assert!(stdout.contains("Threads"), "Should contain Threads header");
+    assert!(stdout.contains("Read"), "Should contain Read header");
+    assert!(stdout.contains("Write"), "Should contain Write header");
+    assert!(stdout.contains("Files"), "Should contain Files header");
+}
+
+#[test]
+fn test_verbose_mode_with_json() {
+    let mut cmd = Command::cargo_bin("stop").unwrap();
+    let output = cmd
+        .arg("--json")
+        .arg("--verbose")
+        .arg("--top-n")
+        .arg("1")
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&stdout).expect("Valid JSON output");
+
+    // Verbose flag shouldn't affect JSON output structure
+    assert!(json.get("processes").is_some());
+    let processes = json["processes"].as_array().unwrap();
+    if !processes.is_empty() {
+        let process = &processes[0];
+        assert!(process.get("thread_count").is_some());
+        assert!(process.get("disk_read_bytes").is_some());
+    }
+}
+
+#[test]
+fn test_watch_mode_ndjson_output() {
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    let mut stop_child = Command::new("cargo")
+        .args(["run", "--", "--json", "--watch", "--interval", "0.3"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("Failed to start stop");
+
+    // Let it run for longer to account for 200ms CPU sample interval
+    // First snapshot: 200ms, then 300ms interval per iteration
+    // Total: 1200ms should give us 200 + 300 + 300 = at least 3 snapshots
+    std::thread::sleep(Duration::from_millis(1200));
+
+    // Kill the process
+    stop_child.kill().expect("Failed to kill process");
+    let output = stop_child.wait_with_output().expect("Failed to wait");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+
+    // Should have at least 1 NDJSON line (accounting for timing variance)
+    assert!(
+        !lines.is_empty(),
+        "Expected at least 1 NDJSON line, got {}",
+        lines.len()
+    );
+
+    // Each line should be valid JSON
+    for (i, line) in lines.iter().enumerate() {
+        let result = serde_json::from_str::<Value>(line);
+        assert!(
+            result.is_ok(),
+            "Line {} is not valid JSON: {}",
+            i + 1,
+            line
+        );
+    }
+}
+
+#[test]
+fn test_watch_mode_with_filter() {
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    let mut stop_child = Command::new("cargo")
+        .args([
+            "run",
+            "--",
+            "--json",
+            "--watch",
+            "--interval",
+            "0.3",
+            "--filter",
+            "cpu >= 0",
+        ])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("Failed to start stop");
+
+    // Account for 200ms initial CPU sample + interval time
+    std::thread::sleep(Duration::from_millis(1200));
+
+    stop_child.kill().expect("Failed to kill process");
+    let output = stop_child.wait_with_output().expect("Failed to wait");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+
+    assert!(
+        !lines.is_empty(),
+        "Expected at least 1 NDJSON line with filter"
+    );
+
+    // Validate structure
+    for line in lines.iter() {
+        let json: Value = serde_json::from_str(line).expect("Valid JSON");
+        assert!(json.get("processes").is_some());
+    }
+}
+
+#[test]
+fn test_search_flag() {
+    let mut cmd = Command::cargo_bin("stop").unwrap();
+    let output = cmd
+        .arg("--search")
+        .arg("cargo")
+        .arg("--json")
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&stdout).expect("Valid JSON output");
+
+    let processes = json["processes"].as_array().unwrap();
+
+    // All returned processes should match search term
+    for process in processes {
+        let name = process["name"].as_str().unwrap().to_lowercase();
+        let command = process["command"].as_str().unwrap().to_lowercase();
+        assert!(
+            name.contains("cargo") || command.contains("cargo"),
+            "Process should match search term 'cargo': name={}, command={}",
+            name,
+            command
+        );
+    }
+}
+
+#[test]
+fn test_search_with_common_term() {
+    // Test that search works with common terms
+    // Note: We can't reliably test self-exclusion in integration tests due to
+    // timing issues and cargo test spawning multiple processes
+    let mut cmd = Command::cargo_bin("stop").unwrap();
+    let output = cmd
+        .arg("--search")
+        .arg("rust")
+        .arg("--json")
+        .arg("--top-n")
+        .arg("5")
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: Value = serde_json::from_str(&stdout).expect("Valid JSON output");
+
+    let processes = json["processes"].as_array().unwrap();
+
+    // All returned processes should contain "rust" in name or command
+    for process in processes {
+        let name = process["name"].as_str().unwrap().to_lowercase();
+        let command = process["command"].as_str().unwrap().to_lowercase();
+        assert!(
+            name.contains("rust") || command.contains("rust"),
+            "Process should match search term 'rust': name={}, command={}",
+            name,
+            command
+        );
+    }
+}
+
+#[test]
+fn test_invalid_interval_negative() {
+    let mut cmd = Command::cargo_bin("stop").unwrap();
+    cmd.arg("--interval")
+        .arg("-1")
+        .arg("--watch")
+        .assert()
+        .failure();
+}
+

@@ -16,7 +16,7 @@
 
 - Documentation: README.md, docs/
 - AI working context: ai/
-  - PLAN.md — Strategic roadmap (Phase 1 → v1.0.0)
+  - PLAN.md — Dependencies, architecture, scope (not time tracking)
   - STATUS.md — Current state (read first)
   - TODO.md — Next steps
   - DECISIONS.md — Architectural choices

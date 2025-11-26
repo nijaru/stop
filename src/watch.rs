@@ -1,10 +1,14 @@
+//! Continuous monitoring (watch mode) functionality.
+//!
+//! This module provides real-time monitoring capabilities with configurable intervals.
+//! Outputs in NDJSON format for JSON mode, or clears screen for human-readable output.
+
 use crate::{
-    Args, DEFAULT_TOP_N, collect_snapshot, filter::FilterExpr, output_csv_header, output_csv_rows,
-    output_human_readable, sort_processes,
+    error::StopError, Args, DEFAULT_TOP_N, collect_snapshot, filter::FilterExpr,
+    output_csv_header, output_csv_rows, output_human_readable, sort_processes,
 };
 use crossterm::{ExecutableCommand, cursor, terminal};
-use std::error::Error;
-use std::io::{Write, stdout};
+use std::io::{BufWriter, Write, stdout};
 use std::time::Duration;
 
 /// Runs continuous monitoring mode, refreshing data at the specified interval.
@@ -15,7 +19,7 @@ use std::time::Duration;
 /// # Errors
 ///
 /// Returns error if data collection or output fails.
-pub fn watch_mode(args: &Args) -> Result<(), Box<dyn Error>> {
+pub fn watch_mode(args: &Args) -> Result<(), StopError> {
     // Parse filter once before loop
     let filter = if let Some(filter_expr_str) = &args.filter {
         match FilterExpr::parse(filter_expr_str) {
@@ -40,6 +44,11 @@ pub fn watch_mode(args: &Args) -> Result<(), Box<dyn Error>> {
     };
 
     let mut first_iteration = true;
+    let mut csv_writer = if args.csv {
+        Some(BufWriter::new(stdout()))
+    } else {
+        None
+    };
 
     loop {
         let mut snapshot = collect_snapshot()?;
@@ -69,20 +78,22 @@ pub fn watch_mode(args: &Args) -> Result<(), Box<dyn Error>> {
             }
         } else if args.csv {
             // CSV: header once, then rows
-            if first_iteration {
-                if let Err(e) = output_csv_header() {
+            if let Some(ref mut writer) = csv_writer {
+                if first_iteration {
+                    if let Err(e) = output_csv_header(writer) {
+                        if e.kind() == std::io::ErrorKind::BrokenPipe {
+                            return Ok(()); // Graceful exit when output is closed
+                        }
+                        return Err(e.into());
+                    }
+                    first_iteration = false;
+                }
+                if let Err(e) = output_csv_rows(writer, &snapshot) {
                     if e.kind() == std::io::ErrorKind::BrokenPipe {
                         return Ok(()); // Graceful exit when output is closed
                     }
                     return Err(e.into());
                 }
-                first_iteration = false;
-            }
-            if let Err(e) = output_csv_rows(&snapshot) {
-                if e.kind() == std::io::ErrorKind::BrokenPipe {
-                    return Ok(()); // Graceful exit when output is closed
-                }
-                return Err(e.into());
             }
         } else {
             // Human-readable: clear screen and redraw
