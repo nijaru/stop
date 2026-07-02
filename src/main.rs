@@ -1,73 +1,10 @@
-//! Process and system monitoring with structured output.
-//!
-//! This tool provides cross-platform system metrics collection with support for
-//! filtering, sorting, and multiple output formats (JSON, CSV, human-readable).
-//!
-//! # Features
-//!
-//! - **Structured output**: JSON and CSV for easy parsing
-//! - **Powerful filtering**: Simple syntax with AND/OR logic
-//! - **Watch mode**: Continuous monitoring with configurable intervals
-//! - **Advanced metrics**: Thread count, disk I/O, open file descriptors
-//!
-//! # Example
-//!
-//! ```ignore
-//! // Collect system snapshot
-//! let snapshot = collect_snapshot()?;
-//!
-//! // Filter and sort processes
-//! let filter = FilterExpr::parse("cpu > 10 and mem > 5")?;
-//! let mut filtered: Vec<_> = snapshot.processes
-//!     .into_iter()
-//!     .filter(|p| filter.matches(p))
-//!     .collect();
-//! sort_processes(&mut filtered, "cpu");
-//! ```
-
-mod error;
-mod filter;
-mod watch;
+//! CLI entry point for stop — structured process monitoring.
 
 use clap::Parser;
-use error::StopError;
-use filter::FilterExpr;
-use owo_colors::OwoColorize;
-use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
-use std::io::{self, BufWriter, Write};
-use sysinfo::System;
-
-/// Minimum interval for CPU usage calculation (milliseconds).
-/// Required by sysinfo to get accurate CPU percentage.
-const CPU_SAMPLE_INTERVAL_MS: u64 = 200;
-
-/// Default number of processes to show when --top-n is not specified.
-const DEFAULT_TOP_N: usize = 20;
-
-/// Byte size constants for human-readable formatting.
-const KB: f64 = 1024.0;
-const MB: f64 = 1024.0 * 1024.0;
-const GB: f64 = 1024.0 * 1024.0 * 1024.0;
-const TB: f64 = 1024.0 * 1024.0 * 1024.0 * 1024.0;
-
-/// Format bytes into human-readable string with colored unit suffix.
-/// Returns a tuple of (value_string, unit_string) for proper alignment.
-fn format_bytes_parts(bytes: u64) -> (String, String) {
-    let bytes_f = bytes as f64;
-
-    if bytes_f >= TB {
-        (format!("{:.1}", bytes_f / TB), "T".to_string())
-    } else if bytes_f >= GB {
-        (format!("{:.1}", bytes_f / GB), "G".to_string())
-    } else if bytes_f >= MB {
-        (format!("{:.1}", bytes_f / MB), "M".to_string())
-    } else if bytes_f >= KB {
-        (format!("{:.1}", bytes_f / KB), "K".to_string())
-    } else {
-        (format!("{}", bytes), "B".to_string())
-    }
-}
+use std::io::{self, Write};
+use stop::{
+    collect_snapshot, ignore_broken_pipe, watch, FilterExpr, Output, Pipeline, StopError,
+};
 
 /// Command-line arguments for the stop tool.
 #[derive(Parser, Debug)]
@@ -83,12 +20,12 @@ EXAMPLES:
     stop -s postgres --filter \"mem > 5\" # Combine search and filter
     stop --watch                      # Live monitoring")]
 #[command(version)]
-pub struct Args {
+struct Args {
     #[arg(long, help = "Output as JSON")]
-    pub json: bool,
+    json: bool,
 
     #[arg(long, help = "Output as CSV")]
-    pub csv: bool,
+    csv: bool,
 
     #[arg(
         short,
@@ -96,7 +33,7 @@ pub struct Args {
         value_name = "TEXT",
         help = "Search processes by name or command"
     )]
-    pub search: Option<String>,
+    search: Option<String>,
 
     #[arg(
         long,
@@ -106,6 +43,8 @@ pub struct Args {
 
 Fields:    cpu, mem, pid, name, user
 Operators: >, >=, <, <=, ==, !=
+Note:      name == uses case-insensitive substring match
+           user == uses case-sensitive exact match
 Logic:     and, or
 
 Examples:
@@ -113,16 +52,16 @@ Examples:
   cpu > 10 and mem > 5
   name == chrome or name == firefox"
     )]
-    pub filter: Option<String>,
+    filter: Option<String>,
 
     #[arg(long, value_name = "FIELD", help = "Sort by: cpu, mem, pid, name")]
-    pub sort_by: Option<String>,
+    sort_by: Option<String>,
 
     #[arg(long, value_name = "N", help = "Show top N processes")]
-    pub top_n: Option<usize>,
+    top_n: Option<usize>,
 
     #[arg(long, help = "Continuous monitoring (watch mode)")]
-    pub watch: bool,
+    watch: bool,
 
     #[arg(
         long,
@@ -130,530 +69,97 @@ Examples:
         help = "Update interval",
         default_value_t = 2.0
     )]
-    pub interval: f64,
+    interval: f64,
 
     #[arg(short, long, help = "Show threads, disk I/O, and open files")]
-    pub verbose: bool,
-}
-
-/// A snapshot of system and process metrics at a point in time.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SystemSnapshot {
-    /// ISO 8601 timestamp (RFC3339)
-    pub timestamp: String,
-    /// System-wide metrics
-    pub system: SystemMetrics,
-    /// List of process information
-    pub processes: Vec<ProcessInfo>,
-}
-
-/// System-wide metrics (CPU, memory).
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SystemMetrics {
-    /// Global CPU usage percentage (0-100)
-    pub cpu_usage: f32,
-    /// Total system memory in bytes
-    pub memory_total: u64,
-    /// Used system memory in bytes
-    pub memory_used: u64,
-    /// Memory usage percentage (0-100)
-    pub memory_percent: f32,
-}
-
-/// Information about a single process.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ProcessInfo {
-    /// Process ID
-    pub pid: u32,
-    /// Process name
-    pub name: String,
-    /// CPU usage percentage (0-100+)
-    pub cpu_percent: f32,
-    /// Memory usage in bytes
-    pub memory_bytes: u64,
-    /// Memory usage percentage (0-100)
-    pub memory_percent: f32,
-    /// User ID (may be numeric string like "501")
-    pub user: String,
-    /// Full command line
-    pub command: String,
-    /// Number of threads
-    pub thread_count: usize,
-    /// Total bytes read from disk
-    pub disk_read_bytes: u64,
-    /// Total bytes written to disk
-    pub disk_write_bytes: u64,
-    /// Number of open file descriptors (None if unavailable)
-    pub open_files: Option<usize>,
-}
-
-/// Collects a snapshot of system and process metrics.
-///
-/// Sleeps for 200ms to allow accurate CPU usage calculation as required by sysinfo.
-///
-/// # Errors
-///
-/// Returns error if system information collection fails.
-pub fn collect_snapshot() -> Result<SystemSnapshot, StopError> {
-    let mut sys = System::new_all();
-
-    std::thread::sleep(std::time::Duration::from_millis(CPU_SAMPLE_INTERVAL_MS));
-    sys.refresh_all();
-
-    let total_memory = sys.total_memory();
-    let used_memory = sys.used_memory();
-    let memory_percent = (used_memory as f64 / total_memory as f64 * 100.0) as f32;
-
-    let global_cpu_usage = sys.global_cpu_usage();
-
-    let process_count = sys.processes().len();
-    let mut processes = Vec::with_capacity(process_count);
-
-    for (pid, process) in sys.processes().iter() {
-        processes.push({
-            let cmd_vec: Vec<String> = process
-                .cmd()
-                .iter()
-                .map(|s| s.to_string_lossy().into_owned())
-                .collect();
-
-            let disk_usage = process.disk_usage();
-            let (disk_read, disk_write) =
-                (disk_usage.total_read_bytes, disk_usage.total_written_bytes);
-
-            ProcessInfo {
-                pid: pid.as_u32(),
-                name: process.name().to_string_lossy().into_owned(),
-                cpu_percent: process.cpu_usage(),
-                memory_bytes: process.memory(),
-                memory_percent: (process.memory() as f64 / total_memory as f64 * 100.0) as f32,
-                user: process
-                    .user_id()
-                    .map(|uid| uid.to_string())
-                    .unwrap_or_else(|| "unknown".to_string()),
-                command: cmd_vec.join(" "),
-                thread_count: process.tasks().map(|t| t.len()).unwrap_or(1),
-                disk_read_bytes: disk_read,
-                disk_write_bytes: disk_write,
-                open_files: process.open_files(),
-            }
-        });
-    }
-
-    Ok(SystemSnapshot {
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        system: SystemMetrics {
-            cpu_usage: global_cpu_usage,
-            memory_total: total_memory,
-            memory_used: used_memory,
-            memory_percent,
-        },
-        processes,
-    })
-}
-
-/// Escapes a field for CSV output according to RFC 4180.
-///
-/// Wraps field in quotes and escapes internal quotes if the field contains
-/// commas, quotes, or newlines. Returns a borrowed reference if no escaping is needed,
-/// avoiding unnecessary allocations.
-///
-/// # Examples
-///
-/// ```ignore
-/// use stop::escape_csv_field;
-///
-/// // No escaping needed
-/// assert_eq!(escape_csv_field("simple"), "simple");
-///
-/// // Escapes commas
-/// assert_eq!(escape_csv_field("foo,bar"), "\"foo,bar\"");
-///
-/// // Escapes quotes
-/// assert_eq!(escape_csv_field("foo\"bar"), "\"foo\"\"bar\"");
-///
-/// // Escapes newlines
-/// assert_eq!(escape_csv_field("foo\nbar"), "\"foo\nbar\"");
-/// ```
-#[must_use]
-pub fn escape_csv_field(field: &str) -> Cow<'_, str> {
-    // RFC 4180: If field contains comma, quote, or newline, wrap in quotes and escape quotes
-    // Use bytes().any() for efficient short-circuit evaluation
-    if field.bytes().any(|b| matches!(b, b',' | b'"' | b'\n' | b'\r')) {
-        Cow::Owned(format!("\"{}\"", field.replace('"', "\"\"")))
-    } else {
-        Cow::Borrowed(field)
-    }
-}
-
-/// Outputs the CSV header row with all column names.
-///
-/// # Errors
-///
-/// Returns error if writing to stdout fails.
-pub fn output_csv_header<W: Write>(writer: &mut W) -> io::Result<()> {
-    writeln!(
-        writer,
-        "timestamp,cpu_usage,memory_total,memory_used,memory_percent,pid,name,cpu_percent,memory_bytes,memory_percent_process,user,command,thread_count,disk_read_bytes,disk_write_bytes,open_files"
-    )?;
-    writer.flush()
-}
-
-/// Outputs CSV rows for all processes in the snapshot.
-///
-/// # Errors
-///
-/// Returns error if writing to stdout fails.
-pub fn output_csv_rows<W: Write>(writer: &mut W, snapshot: &SystemSnapshot) -> io::Result<()> {
-    for process in &snapshot.processes {
-        let open_files_str = process
-            .open_files
-            .map(|n| n.to_string())
-            .unwrap_or_default();
-        writeln!(
-            writer,
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
-            escape_csv_field(&snapshot.timestamp),
-            snapshot.system.cpu_usage,
-            snapshot.system.memory_total,
-            snapshot.system.memory_used,
-            snapshot.system.memory_percent,
-            process.pid,
-            escape_csv_field(&process.name),
-            process.cpu_percent,
-            process.memory_bytes,
-            process.memory_percent,
-            escape_csv_field(&process.user),
-            escape_csv_field(&process.command),
-            process.thread_count,
-            process.disk_read_bytes,
-            process.disk_write_bytes,
-            open_files_str
-        )?;
-    }
-    writer.flush()
-}
-
-fn output_csv(snapshot: &SystemSnapshot) -> io::Result<()> {
-    let mut writer = BufWriter::new(io::stdout());
-    output_csv_header(&mut writer)?;
-    output_csv_rows(&mut writer, snapshot)
-}
-
-/// Sorts processes in-place by the specified metric.
-///
-/// # Arguments
-///
-/// * `processes` - Mutable slice of processes to sort
-/// * `sort_by` - Sort key: "cpu", "mem"/"memory", "pid", or "name" (case-insensitive)
-///
-/// Defaults to CPU descending if an unknown sort key is provided.
-///
-/// # Examples
-///
-/// ```ignore
-/// let mut processes = vec![/* ... */];
-///
-/// // Sort by CPU (descending)
-/// sort_processes(&mut processes, "cpu");
-/// assert!(processes[0].cpu_percent >= processes[1].cpu_percent);
-///
-/// // Sort by memory (descending)
-/// sort_processes(&mut processes, "mem");
-/// assert!(processes[0].memory_percent >= processes[1].memory_percent);
-///
-/// // Sort by PID (ascending)
-/// sort_processes(&mut processes, "pid");
-/// assert!(processes[0].pid <= processes[1].pid);
-/// ```
-pub fn sort_processes(processes: &mut [ProcessInfo], sort_by: &str) {
-    match sort_by.to_lowercase().as_str() {
-        "cpu" => processes.sort_by(|a, b| {
-            b.cpu_percent
-                .partial_cmp(&a.cpu_percent)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        }),
-        "mem" | "memory" => processes.sort_by(|a, b| {
-            b.memory_percent
-                .partial_cmp(&a.memory_percent)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        }),
-        "pid" => processes.sort_by_key(|p| p.pid),
-        "name" => processes.sort_by_cached_key(|p| p.name.to_lowercase()),
-        _ => {
-            eprintln!(
-                "Warning: Unknown sort field '{sort_by}', using 'cpu'. Valid: cpu, mem, pid, name"
-            );
-            processes.sort_by(|a, b| {
-                b.cpu_percent
-                    .partial_cmp(&a.cpu_percent)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
-    }
-}
-
-/// Outputs snapshot in human-readable format with colors and formatting.
-///
-/// Displays system metrics, filter info, and a table of processes with
-/// color-coded CPU and memory usage.
-///
-/// # Errors
-///
-/// Returns error if writing to stdout fails.
-pub fn output_human_readable(
-    snapshot: &SystemSnapshot,
-    search_term: Option<&String>,
-    filter_expr: Option<&String>,
-    sort_by: &str,
-    limit: usize,
     verbose: bool,
-) -> io::Result<()> {
-    let mut stdout = io::stdout();
-    writeln!(
-        stdout,
-        "{} {}",
-        "stop".bold().cyan(),
-        format!("v{}", env!("CARGO_PKG_VERSION")).dimmed()
-    )?;
-    writeln!(stdout)?;
-    writeln!(stdout, "{}", "System:".bold())?;
+}
 
-    // Color code CPU based on usage
-    let cpu_value = snapshot.system.cpu_usage;
-    let cpu_display = if cpu_value > 80.0 {
-        format!("{cpu_value:.1}%").red().to_string()
-    } else if cpu_value > 50.0 {
-        format!("{cpu_value:.1}%").yellow().to_string()
-    } else {
-        format!("{cpu_value:.1}%").green().to_string()
-    };
-    writeln!(stdout, "  CPU: {cpu_display}")?;
+// ---------------------------------------------------------------------------
+// Binary-layer helpers (not in the library)
+// ---------------------------------------------------------------------------
 
-    // Color code memory based on usage
-    let mem_value = snapshot.system.memory_percent;
-    let mem_str = format!(
-        "{:.1}% ({} / {} MB)",
-        mem_value,
-        snapshot.system.memory_used / 1024 / 1024,
-        snapshot.system.memory_total / 1024 / 1024
-    );
-    let mem_display = if mem_value > 80.0 {
-        mem_str.red().to_string()
-    } else if mem_value > 60.0 {
-        mem_str.yellow().to_string()
-    } else {
-        mem_str.green().to_string()
-    };
-    writeln!(stdout, "  Memory: {mem_display}")?;
-    writeln!(stdout)?;
-
-    if let Some(search) = search_term {
-        writeln!(stdout, "{} {}", "Search:".bold(), search.cyan())?;
-    }
-    if let Some(filter) = filter_expr {
-        writeln!(stdout, "{} {}", "Filter:".bold(), filter.cyan())?;
-    }
-    writeln!(
-        stdout,
-        "{} {} | {} {} {}",
-        "Sort:".bold(),
-        sort_by.yellow(),
-        "Showing:".bold(),
-        snapshot.processes.len().min(limit).to_string().green(),
-        "processes".dimmed()
-    )?;
-    writeln!(stdout)?;
-
-    if verbose {
-        writeln!(
-            stdout,
-            "{:<8} {:<20} {:>8} {:>8} {:>7} {:>8} {:>8} {:>7}",
-            "PID".bold(),
-            "Name".bold(),
-            "CPU%".bold(),
-            "Mem%".bold(),
-            "Threads".bold(),
-            "Read".bold(),
-            "Write".bold(),
-            "Files".bold()
-        )?;
-        writeln!(stdout, "{}", "─".repeat(93).dimmed())?;
-    } else {
-        writeln!(
-            stdout,
-            "{:<8} {:<20} {:>8} {:>8} {:<10}",
-            "PID".bold(),
-            "Name".bold(),
-            "CPU%".bold(),
-            "Mem%".bold(),
-            "User".bold()
-        )?;
-        writeln!(stdout, "{}", "─".repeat(70).dimmed())?;
-    }
-
-    for process in &snapshot.processes {
-        // Color code CPU usage
-        let cpu_str = format!("{:>7.1}%", process.cpu_percent);
-        let cpu_display = if process.cpu_percent > 50.0 {
-            cpu_str.red().to_string()
-        } else if process.cpu_percent > 20.0 {
-            cpu_str.yellow().to_string()
-        } else {
-            cpu_str.to_string()
-        };
-
-        // Color code memory usage
-        let mem_str = format!("{:>7.1}%", process.memory_percent);
-        let mem_display = if process.memory_percent > 5.0 {
-            mem_str.red().to_string()
-        } else if process.memory_percent > 2.0 {
-            mem_str.yellow().to_string()
-        } else {
-            mem_str.to_string()
-        };
-
-        if verbose {
-            let (read_val, read_unit) = format_bytes_parts(process.disk_read_bytes);
-            let (write_val, write_unit) = format_bytes_parts(process.disk_write_bytes);
-            let open_files_str = process
-                .open_files
-                .map(|f| f.to_string())
-                .unwrap_or_else(|| "-".to_string());
-
-            // Format disk I/O with right-aligned numbers and dimmed units
-            // Width: 6 chars for number + 1 space + 1 char for unit = 8 total
-            let read_formatted = format!("{:>6} {}", read_val, read_unit.dimmed());
-            let write_formatted = format!("{:>6} {}", write_val, write_unit.dimmed());
-
-            writeln!(
-                stdout,
-                "{:<8} {:<20} {} {} {:>7} {} {} {:>7}",
-                process.pid.to_string().cyan(),
-                &process.name[..process.name.len().min(20)],
-                cpu_display,
-                mem_display,
-                process.thread_count,
-                read_formatted,
-                write_formatted,
-                open_files_str
-            )?;
-        } else {
-            let user_str = &process.user[..process.user.len().min(10)];
-            let user_display = user_str.dimmed();
-            writeln!(
-                stdout,
-                "{:<8} {:<20} {} {} {:<10}",
-                process.pid.to_string().cyan(),
-                &process.name[..process.name.len().min(20)],
-                cpu_display,
-                mem_display,
-                user_display
-            )?;
+/// Parses a filter expression, printing a user-friendly error and exiting on failure.
+///
+/// In JSON mode, errors are emitted as a structured JSON object for AI agent consumption.
+fn parse_filter_or_exit(expr: &str, json_mode: bool) -> Option<FilterExpr> {
+    match FilterExpr::parse(expr) {
+        Ok(f) => Some(f),
+        Err(e) => {
+            if json_mode {
+                let error_json = serde_json::json!({
+                    "error": "FilterError",
+                    "message": e.to_string(),
+                    "expression": expr,
+                });
+                let _ = writeln!(
+                    io::stdout(),
+                    "{}",
+                    serde_json::to_string_pretty(&error_json).unwrap_or_default()
+                );
+            } else {
+                eprintln!("Error: {e}");
+                eprintln!("Expression: {expr}");
+            }
+            std::process::exit(1);
         }
     }
-    stdout.flush()
 }
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 
 fn main() -> Result<(), StopError> {
     let args = Args::parse();
 
     // Validate interval
-    if args.interval < 0.0 {
-        return Err(StopError::config("Interval must be positive"));
+    if !args.interval.is_finite() || args.interval < 0.0 {
+        return Err(StopError::config("Interval must be a finite positive number"));
     }
     if args.interval < 0.2 {
         eprintln!("Warning: Interval below 0.2s may cause high CPU usage");
     }
 
-    // Watch mode
-    if args.watch {
-        return watch::watch_mode(&args);
-    }
+    // Build the pipeline
+    let filter = args
+        .filter
+        .as_deref()
+        .and_then(|f| parse_filter_or_exit(f, args.json));
+    let pipeline = Pipeline::new(args.search.clone(), filter, args.sort_by.clone(), args.top_n);
 
-    // Single snapshot mode
-    let mut snapshot = collect_snapshot()?;
-
-    // Parse filter if provided
-    let filter = if let Some(filter_expr_str) = &args.filter {
-        match FilterExpr::parse(filter_expr_str) {
-            Ok(f) => Some(f),
-            Err(e) => {
-                if args.json {
-                    // Output error as JSON for AI agents
-                    let error_json = serde_json::json!({
-                        "error": "FilterError",
-                        "message": e.to_string(),
-                        "expression": filter_expr_str,
-                    });
-                    // Ignore broken pipe on error output since we're exiting anyway
-                    let _ = writeln!(
-                        io::stdout(),
-                        "{}",
-                        serde_json::to_string_pretty(&error_json)?
-                    );
-                } else {
-                    eprintln!("Error: {e}");
-                    eprintln!("Expression: {filter_expr_str}");
-                }
-                std::process::exit(1);
-            }
-        }
-    } else {
-        None
-    };
-
-    // Apply search (case-insensitive substring match in name or command)
-    // Exclude current process to avoid self-reference (search term appears in command args)
-    if let Some(search_term) = &args.search {
-        let search_lower = search_term.to_lowercase();
-        let current_pid = std::process::id();
-        snapshot.processes.retain(|p| {
-            if p.pid == current_pid {
-                return false; // Always exclude current process from search results
-            }
-            p.name.to_lowercase().contains(&search_lower)
-                || p.command.to_lowercase().contains(&search_lower)
-        });
-    }
-
-    // Apply filter
-    if let Some(ref f) = filter {
-        snapshot.processes.retain(|p| f.matches(p));
-    }
-
-    // Apply sorting
-    let sort_by = args.sort_by.as_deref().unwrap_or("cpu");
-    sort_processes(&mut snapshot.processes, sort_by);
-
-    // Apply top-n limit
-    let limit = args.top_n.unwrap_or(DEFAULT_TOP_N);
-    snapshot.processes.truncate(limit);
-
-    // Output with graceful broken pipe handling
-    let result = if args.json {
-        writeln!(io::stdout(), "{}", serde_json::to_string_pretty(&snapshot)?)
-            .and_then(|_| io::stdout().flush())
+    // Build the output format
+    let mut output = if args.json {
+        Output::json()
     } else if args.csv {
-        output_csv(&snapshot)
+        Output::csv()
     } else {
-        output_human_readable(
-            &snapshot,
-            args.search.as_ref(),
-            args.filter.as_ref(),
-            sort_by,
-            limit,
+        Output::human(
+            args.search.clone(),
+            args.filter.clone(),
+            args.sort_by.clone(),
+            args.top_n,
             args.verbose,
         )
     };
 
-    // Exit gracefully on broken pipe (e.g., piping to head)
-    if let Err(e) = result {
-        if e.kind() == io::ErrorKind::BrokenPipe {
-            return Ok(());
-        }
-        return Err(e.into());
+    // Dispatch
+    if args.watch {
+        return watch::watch_mode(&pipeline, &mut output, args.interval);
     }
 
+    let mut snapshot = collect_snapshot()?;
+    let had_filter = pipeline.has_active_filter();
+    pipeline.apply(&mut snapshot.processes);
+
+    // Exit 2 when a filter/search was active but nothing matched.
+    // Still write output (valid JSON/CSV/table with empty process list)
+    // so consumers can inspect both exit code and data.
+    if had_filter && snapshot.processes.is_empty() {
+        let _ = output.write(&snapshot);
+        std::process::exit(2);
+    }
+
+    ignore_broken_pipe(output.write(&snapshot))?;
     Ok(())
 }

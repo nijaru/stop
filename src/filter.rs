@@ -110,7 +110,6 @@ impl FilterField {
             _ => {
                 // Provide helpful suggestions for common mistakes
                 let suggestion = match s.to_lowercase().as_str() {
-                    "memory" => " (use 'mem' or 'memory')",
                     "process" => " (did you mean 'pid' or 'name'?)",
                     "command" | "cmd" => " (did you mean 'name'?)",
                     "username" => " (did you mean 'user'?)",

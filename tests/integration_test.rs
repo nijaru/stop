@@ -21,7 +21,7 @@ fn test_version_flag() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("0.0.1"));
+        .stdout(predicate::str::contains("0.0.2"));
 }
 
 #[test]
@@ -197,7 +197,7 @@ fn test_human_readable_output() {
         .assert()
         .success()
         .stdout(predicate::str::contains("stop"))
-        .stdout(predicate::str::contains("v0.0.1"))
+        .stdout(predicate::str::contains("v0.0.2"))
         .stdout(predicate::str::contains("System:"))
         .stdout(predicate::str::contains("CPU:"))
         .stdout(predicate::str::contains("Memory:"));
