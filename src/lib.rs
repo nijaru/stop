@@ -10,8 +10,8 @@ pub mod output;
 pub mod pipeline;
 pub mod watch;
 
-pub use data::{collect_snapshot, ProcessInfo, SystemMetrics, SystemSnapshot, DEFAULT_TOP_N};
+pub use data::{DEFAULT_TOP_N, ProcessInfo, SystemMetrics, SystemSnapshot, collect_snapshot};
 pub use error::StopError;
 pub use filter::FilterExpr;
-pub use output::{ignore_broken_pipe, Output};
+pub use output::{Output, ignore_broken_pipe};
 pub use pipeline::Pipeline;

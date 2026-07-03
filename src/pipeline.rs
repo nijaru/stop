@@ -1,6 +1,6 @@
 //! Process filtering pipeline: search → filter → sort → truncate.
 
-use crate::data::{self, ProcessInfo, DEFAULT_TOP_N};
+use crate::data::{self, DEFAULT_TOP_N, ProcessInfo};
 use crate::filter::FilterExpr;
 
 /// A reusable pipeline that transforms a process list.

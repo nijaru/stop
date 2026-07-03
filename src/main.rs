@@ -2,9 +2,7 @@
 
 use clap::Parser;
 use std::io::{self, Write};
-use stop::{
-    collect_snapshot, ignore_broken_pipe, watch, FilterExpr, Output, Pipeline, StopError,
-};
+use stop::{FilterExpr, Output, Pipeline, StopError, collect_snapshot, ignore_broken_pipe, watch};
 
 /// Command-line arguments for the stop tool.
 #[derive(Parser, Debug)]
@@ -115,7 +113,9 @@ fn main() -> Result<(), StopError> {
 
     // Validate interval
     if !args.interval.is_finite() || args.interval < 0.0 {
-        return Err(StopError::config("Interval must be a finite positive number"));
+        return Err(StopError::config(
+            "Interval must be a finite positive number",
+        ));
     }
     if args.interval < 0.2 {
         eprintln!("Warning: Interval below 0.2s may cause high CPU usage");
@@ -126,7 +126,12 @@ fn main() -> Result<(), StopError> {
         .filter
         .as_deref()
         .and_then(|f| parse_filter_or_exit(f, args.json));
-    let pipeline = Pipeline::new(args.search.clone(), filter, args.sort_by.clone(), args.top_n);
+    let pipeline = Pipeline::new(
+        args.search.clone(),
+        filter,
+        args.sort_by.clone(),
+        args.top_n,
+    );
 
     // Build the output format
     let mut output = if args.json {

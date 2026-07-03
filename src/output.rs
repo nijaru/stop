@@ -1,6 +1,6 @@
 //! Output formatting: structured (JSON, CSV) and human-readable display.
 
-use crate::data::{self, SystemSnapshot, DEFAULT_TOP_N};
+use crate::data::{self, DEFAULT_TOP_N, SystemSnapshot};
 use owo_colors::OwoColorize;
 use std::borrow::Cow;
 use std::io::{self, BufWriter, Write};
@@ -120,7 +120,10 @@ pub fn ignore_broken_pipe(result: io::Result<()>) -> io::Result<()> {
 /// Returns a borrowed reference if no escaping is needed, avoiding allocations.
 #[must_use]
 pub fn escape_csv_field(field: &str) -> Cow<'_, str> {
-    if field.bytes().any(|b| matches!(b, b',' | b'"' | b'\n' | b'\r')) {
+    if field
+        .bytes()
+        .any(|b| matches!(b, b',' | b'"' | b'\n' | b'\r'))
+    {
         Cow::Owned(format!("\"{}\"", field.replace('"', "\"\"")))
     } else {
         Cow::Borrowed(field)

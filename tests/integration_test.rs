@@ -448,12 +448,7 @@ fn test_watch_mode_ndjson_output() {
     // Each line should be valid JSON
     for (i, line) in lines.iter().enumerate() {
         let result = serde_json::from_str::<Value>(line);
-        assert!(
-            result.is_ok(),
-            "Line {} is not valid JSON: {}",
-            i + 1,
-            line
-        );
+        assert!(result.is_ok(), "Line {} is not valid JSON: {}", i + 1, line);
     }
 }
 
@@ -568,4 +563,3 @@ fn test_invalid_interval_negative() {
         .assert()
         .failure();
 }
-

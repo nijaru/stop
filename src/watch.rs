@@ -1,8 +1,8 @@
 //! Continuous monitoring (watch mode).
 
 use crate::error::StopError;
-use crate::{collect_snapshot, Output, Pipeline};
-use crossterm::{cursor, terminal, ExecutableCommand};
+use crate::{Output, Pipeline, collect_snapshot};
+use crossterm::{ExecutableCommand, cursor, terminal};
 use std::io::{self, stdout};
 use std::time::Duration;
 
