@@ -282,3 +282,20 @@ fn top_human_output_shows_header() {
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains("PID"), "table header missing");
 }
+
+#[test]
+fn fast_mode_reports_null_cpu() {
+    let output = stop()
+        .args(["list", "--fast", "--json", "--limit", "5"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&output.stdout).unwrap();
+    for p in v["processes"].as_array().unwrap() {
+        assert!(
+            p["cpu_percent"].is_null(),
+            "--fast must report cpu_percent as null, got {}",
+            p["cpu_percent"]
+        );
+    }
+}

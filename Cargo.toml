@@ -1,6 +1,7 @@
 [package]
 name = "stop-cli"
 version = "0.1.0"
+rust-version = "1.95"
 edition = "2024"
 authors = ["Nick <nick@nijaru.com>"]
 description = "Structured process monitoring for AI agents and automation"

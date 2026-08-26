@@ -19,7 +19,7 @@ struct TopReport {
 }
 
 pub fn run(args: &TopArgs) -> Result<crate::cmd::Outcome, StopError> {
-    let (system, all) = collector::collect()?;
+    let (system, all) = collector::collect(!args.collection.fast)?;
 
     let total_processes = all.len();
     let mut ranked = all; // consume: nothing else reads the full table

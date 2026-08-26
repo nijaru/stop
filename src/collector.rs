@@ -26,14 +26,18 @@ fn refresh_kind() -> RefreshKind {
 
 /// Collects a full system + process sample.
 ///
-/// Blocks for [`CPU_SAMPLE_INTERVAL_MS`] between two refreshes so CPU
-/// usage reflects real deltas. This is the single owner of the `System`
-/// handle; callers receive plain data only.
-pub fn collect() -> Result<(SystemMetrics, Vec<ProcessInfo>), StopError> {
+/// With `warm_up_cpu`, blocks for [`CPU_SAMPLE_INTERVAL_MS`] between two
+/// refreshes so CPU usage reflects real deltas. Without it (`--fast`),
+/// one refresh runs immediately and per-process CPU readings are `None`.
+/// This is the single owner of the `System` handle; callers receive
+/// plain data only.
+pub fn collect(warm_up_cpu: bool) -> Result<(SystemMetrics, Vec<ProcessInfo>), StopError> {
     let kind = refresh_kind();
     let mut sys = System::new_with_specifics(kind);
-    std::thread::sleep(Duration::from_millis(CPU_SAMPLE_INTERVAL_MS));
-    sys.refresh_specifics(kind);
+    if warm_up_cpu {
+        std::thread::sleep(Duration::from_millis(CPU_SAMPLE_INTERVAL_MS));
+        sys.refresh_specifics(kind);
+    }
 
     // Username resolution: uid -> name from the live user database.
     let users: HashMap<String, String> = Users::new_with_refreshed_list()
@@ -49,7 +53,7 @@ pub fn collect() -> Result<(SystemMetrics, Vec<ProcessInfo>), StopError> {
     };
 
     let metrics = SystemMetrics {
-        cpu_percent: sys.global_cpu_usage(),
+        cpu_percent: warm_up_cpu.then(|| sys.global_cpu_usage()),
         memory_total_bytes: total_memory,
         memory_used_bytes: sys.used_memory(),
         memory_used_percent,
@@ -77,7 +81,7 @@ pub fn collect() -> Result<(SystemMetrics, Vec<ProcessInfo>), StopError> {
             state: state_name(process.status()).to_string(),
             user,
             uid,
-            cpu_percent: process.cpu_usage(),
+            cpu_percent: warm_up_cpu.then(|| process.cpu_usage()),
             rss_bytes: process.memory(),
             virtual_bytes: process.virtual_memory(),
             threads: process.tasks().map(|t| t.len() as u32),

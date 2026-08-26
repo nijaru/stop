@@ -45,7 +45,7 @@ struct InspectError {
 }
 
 pub fn run(args: &InspectArgs) -> Result<crate::cmd::Outcome, StopError> {
-    let (_metrics, all) = collector::collect()?;
+    let (_metrics, all) = collector::collect(true)?;
 
     let found: Result<ProcessInfo, InspectError> = match parse_pid(&args.target).map(Pid::as_u32) {
         Some(pid) => all

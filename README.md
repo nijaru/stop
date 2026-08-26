@@ -42,6 +42,7 @@ stop list --name postgres          # case-insensitive substring match
 stop list --user nick              # by username or raw UID
 stop list --sort mem --limit 20    # top 20 by memory
 stop list --json                   # full JSON envelope
+stop list --fast                   # ~24ms instead of ~240ms (see below)
 ```
 
 JSON envelope:
@@ -58,6 +59,14 @@ JSON envelope:
 ```
 
 `truncated` is true only when a limit cut rows from `matched`.
+
+### Fast mode
+
+Accurate CPU percentages require two refreshes separated by ~200 ms, so a
+default run costs ~240 ms wall time. Pass `--fast` (on `list` and `top`) to
+skip the warm-up and collect in ~25 ms — but every `cpu_percent`, including
+the system summary, is reported as `null` rather than a wrong number, and
+`--sort cpu` ordering is meaningless in that mode.
 
 ### `stop inspect` — resolve exactly one process
 
@@ -91,7 +100,7 @@ stop top --json                    # metrics and snapshot in one document
 | `name`, `exe`, `cmdline`, `cwd` | Location facts; unavailable values are `null` |
 | `state` | One of `idle`, `run`, `sleep`, `stop`, `zombie`, `tracing`, `dead`, `wakekill`, `waking`, `parked`, `lock_blocked`, `disk_sleep`, `unknown` |
 | `user`, `uid` | Resolved username and raw ID |
-| `cpu_percent` | Total across cores, can exceed 100 |
+| `cpu_percent` | Total across cores, can exceed 100; **null under `--fast`** |
 | `rss_bytes`, `virtual_bytes` | Raw byte counts |
 | `threads` | Thread count (`null` on macOS) |
 | `io_read_bytes`, `io_written_bytes` | Cumulative totals |
@@ -115,6 +124,8 @@ Enables shell checks like `stop inspect nginx && echo running`.
 4. **Small surface** — few commands, well-defined semantics
 
 ## Development
+
+Requires Rust ≥ 1.95 (`rust-version` is declared, driven by sysinfo 0.39).
 
 ```bash
 cargo test      # unit + integration suite

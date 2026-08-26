@@ -43,6 +43,15 @@ pub struct OutputArgs {
     pub pretty: bool,
 }
 
+/// Shared collection-mode flags across table-producing commands.
+#[derive(Parser, Debug)]
+pub struct CollectionArgs {
+    /// Skip the 200 ms CPU warm-up: ~8x faster collection, but
+    /// `cpu_percent` is null and `--sort cpu` ordering is meaningless.
+    #[arg(long)]
+    pub fast: bool,
+}
+
 #[derive(Parser, Debug)]
 pub struct ListArgs {
     /// Case-insensitive substring match on process name.
@@ -59,6 +68,9 @@ pub struct ListArgs {
     /// Maximum number of processes to return after sorting.
     #[arg(short, long)]
     pub limit: Option<usize>,
+
+    #[command(flatten)]
+    pub collection: CollectionArgs,
 
     #[command(flatten)]
     pub output: OutputArgs,
@@ -81,6 +93,9 @@ pub struct TopArgs {
     /// Number of processes to show.
     #[arg(short, long, default_value_t = 10)]
     pub limit: usize,
+
+    #[command(flatten)]
+    pub collection: CollectionArgs,
 
     #[command(flatten)]
     pub output: OutputArgs,

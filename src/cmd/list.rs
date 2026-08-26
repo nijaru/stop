@@ -9,7 +9,7 @@ use crate::model::{ProcessInfo, Snapshot};
 use crate::output;
 
 pub fn run(args: &ListArgs) -> Result<crate::cmd::Outcome, StopError> {
-    let (_metrics, all) = collector::collect()?;
+    let (_metrics, all) = collector::collect(!args.collection.fast)?;
 
     let total_processes = all.len();
     let mut matched: Vec<ProcessInfo> = all

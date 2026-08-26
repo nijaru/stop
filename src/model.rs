@@ -44,7 +44,8 @@ pub struct ProcessInfo {
     /// Raw user ID as a string; `null` when unavailable.
     pub uid: Option<String>,
     /// Total CPU usage percent across cores; can exceed 100.
-    pub cpu_percent: f32,
+    /// `null` when collection ran with `--fast` (no warm-up sample).
+    pub cpu_percent: Option<f32>,
     /// Resident set size in bytes.
     pub rss_bytes: u64,
     /// Virtual memory size in bytes.
@@ -84,7 +85,8 @@ impl SortKey {
         match self {
             SortKey::Cpu => processes.sort_by(|a, b| {
                 b.cpu_percent
-                    .partial_cmp(&a.cpu_percent)
+                    .unwrap_or(0.0)
+                    .partial_cmp(&a.cpu_percent.unwrap_or(0.0))
                     .unwrap_or(std::cmp::Ordering::Equal)
             }),
             SortKey::Mem => processes.sort_by_key(|p| std::cmp::Reverse(p.rss_bytes)),
@@ -110,7 +112,8 @@ impl std::fmt::Display for SortKey {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SystemMetrics {
     /// Global CPU usage percent across all cores.
-    pub cpu_percent: f32,
+    /// `null` when collection ran with `--fast` (no warm-up sample).
+    pub cpu_percent: Option<f32>,
     pub memory_total_bytes: u64,
     pub memory_used_bytes: u64,
     pub memory_used_percent: f32,
@@ -197,7 +200,7 @@ mod tests {
             state: "run".to_string(),
             user: None,
             uid: None,
-            cpu_percent: cpu,
+            cpu_percent: Some(cpu),
             rss_bytes: rss,
             virtual_bytes: 0,
             threads: None,

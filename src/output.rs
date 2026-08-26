@@ -62,7 +62,9 @@ pub fn print_process_table(processes: &[ProcessInfo], header: Option<&str>) -> i
                 p.pid.to_string(),
                 p.user.clone().unwrap_or_else(|| "-".into()),
                 truncate_chars(&p.name, NAME_WIDTH),
-                format!("{:.1}", p.cpu_percent),
+                p.cpu_percent
+                    .map(|c| format!("{c:.1}"))
+                    .unwrap_or_else(|| "-".into()),
                 format!("{rss_val}{rss_unit}"),
                 p.threads
                     .map(|t| t.to_string())
@@ -155,7 +157,7 @@ pub fn print_process_detail(p: &ProcessInfo) -> io::Result<()> {
         ("state", p.state.clone()),
         ("user", opt_str(&p.user)),
         ("uid", opt_str(&p.uid)),
-        ("cpu_percent", format!("{:.2}", p.cpu_percent)),
+        ("cpu_percent", opt_f32(p.cpu_percent)),
         ("rss", human_bytes(p.rss_bytes)),
         ("virtual", human_bytes(p.virtual_bytes)),
         ("threads", opt_u32(&p.threads)),
@@ -182,9 +184,13 @@ pub fn print_process_detail(p: &ProcessInfo) -> io::Result<()> {
 pub fn system_header(metrics: &SystemMetrics) -> String {
     let (val, unit) = crate::model::format_bytes_parts(metrics.memory_used_bytes);
     let (tval, tunit) = crate::model::format_bytes_parts(metrics.memory_total_bytes);
+    let cpu = metrics
+        .cpu_percent
+        .map(|c| format!("{c:.1}%"))
+        .unwrap_or_else(|| "-".into());
     format!(
-        "CPU {:.1}%  MEM {val}{unit}/{tval}{tunit} ({:.1}%)",
-        metrics.cpu_percent, metrics.memory_used_percent
+        "CPU {cpu}  MEM {val}{unit}/{tval}{tunit} ({:.1}%)",
+        metrics.memory_used_percent
     )
 }
 
@@ -202,6 +208,10 @@ fn opt_u32(v: &Option<u32>) -> String {
         Some(n) => n.to_string(),
         None => "-".into(),
     }
+}
+
+fn opt_f32(v: Option<f32>) -> String {
+    v.map(|c| format!("{c:.2}")).unwrap_or_else(|| "-".into())
 }
 
 fn unix_to_rfc3339(secs: u64) -> String {
