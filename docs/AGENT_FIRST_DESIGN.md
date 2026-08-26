@@ -1,12 +1,12 @@
 # Agent-first `stop` redesign
 
-This branch explores a ground-up design for `stop` as a local observation CLI that is pleasant for humans and deterministic for agents.
+This branch is the ground-up redesign of `stop` as a local observation CLI that is pleasant for humans and deterministic for agents.
 
 ## Product boundary
 
 `stop` answers questions about live local machine state. It is intentionally observational: no signals, kill, renice, freeze, or other mutation operations belong in the core tool.
 
-The CLI is the primary interface. Human-readable text is the default. `--json` is the stable machine representation, and `--jsonl` is reserved for repeated or streaming observations.
+The CLI is the primary interface. Human-readable text is the default. `--json` is the versioned machine representation, and `--jsonl` is reserved for repeated or streaming observations.
 
 A future TUI, if any, must be only another renderer/client of the same core query and result model. It must not own collection or semantics.
 
@@ -67,11 +67,13 @@ Structured responses must make completeness explicit. A caller must be able to d
 - the platform does not support the field,
 - the result was intentionally truncated.
 
+During redesign, the machine schema remains explicitly pre-stable (currently `stop/next-0`) until availability/provenance and temporal semantics are frozen. It will become `stop/1` only when that contract is ready to preserve.
+
 Machine responses will converge on a versioned envelope with observation metadata such as:
 
 ```json
 {
-  "schema": "stop/1",
+  "schema": "stop/next-0",
   "observed_at": "...",
   "result": {},
   "meta": {
@@ -124,15 +126,16 @@ Sensitive enrichments should therefore be explicit and independently permissiona
 
 ## Initial implementation strategy
 
-Do not rewrite every feature at once.
+The redesign branch uses the real `stop` binary. Git provides the isolation; there is no second product name or `stop-next` binary.
 
-1. Introduce the new typed observation model and selector layer alongside the current implementation.
-2. Add an experimental CLI client using the new model while keeping the existing `stop` binary intact.
-3. Establish deterministic text/JSON rendering and exhaustive-vs-ranked semantics.
-4. Add process identity/context fields and native collector seams.
-5. Implement relationships (parent/child first, then ports/files).
-6. Implement `sample`, `snapshot`, `diff`, and `wait` against the same model.
-7. Replace the legacy binary only after the new path has task-level tests and parity for the behavior we want to keep.
+1. Establish the new typed observation model and selector layer.
+2. Route the `stop` CLI through the new model with deterministic text/JSON rendering and exhaustive-vs-ranked semantics.
+3. Add process identity/context fields and native collector seams.
+4. Implement relationships (parent/child first, then ports/files).
+5. Implement `sample`, `snapshot`, `diff`, and `wait` against the same model.
+6. Add task-level and cross-platform tests before merging the redesign to `main`.
+
+Legacy implementation files may remain temporarily during development, but they are not a parallel public CLI and can be removed as the redesigned path replaces them.
 
 ## Evaluation
 
