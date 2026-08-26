@@ -1,17 +1,16 @@
 //! Process and system monitoring with structured output.
 //!
-//! Provides cross-platform system metrics collection with filtering, sorting,
-//! and multiple output formats (JSON, CSV, human-readable).
+//! JSON-first CLI: `list`, `inspect`, `top`.
 
-pub mod data;
+pub mod cli;
+pub mod cmd;
+pub mod collector;
 pub mod error;
-pub mod filter;
+pub mod model;
 pub mod output;
-pub mod pipeline;
-pub mod watch;
 
-pub use data::{DEFAULT_TOP_N, ProcessInfo, SystemMetrics, SystemSnapshot, collect_snapshot};
+pub use cli::{Cli, Command};
 pub use error::StopError;
-pub use filter::FilterExpr;
-pub use output::{Output, ignore_broken_pipe};
-pub use pipeline::Pipeline;
+pub use model::{
+    ProcessIdentity, ProcessInfo, Snapshot, SortKey, SystemMetrics, format_bytes_parts,
+};
