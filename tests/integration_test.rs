@@ -184,6 +184,39 @@ fn inspect_unknown_name_exits_two() {
 }
 
 #[test]
+fn inspect_ambiguous_name_exits_three_with_candidates() {
+    // Two live children share the name "sleep", making the target ambiguous.
+    let mut children: Vec<std::process::Child> = (0..2)
+        .map(|_| {
+            std::process::Command::new("sleep")
+                .arg("10")
+                .spawn()
+                .expect("spawn sleep")
+        })
+        .collect();
+
+    let result = stop()
+        .args(["inspect", "sleep", "--json"])
+        .output()
+        .unwrap();
+
+    for child in &mut children {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    assert_eq!(result.status.code(), Some(3));
+    let err: Value = serde_json::from_slice(&result.stderr).unwrap();
+    assert_eq!(err["code"].as_str().unwrap(), "ambiguous");
+    let candidates = err["candidates"].as_array().unwrap();
+    assert!(candidates.len() >= 2, "expected >=2 candidates");
+    for c in candidates {
+        assert!(c["pid"].as_u64().unwrap() > 0);
+        assert!(c["start_time"].is_u64());
+    }
+}
+
+#[test]
 fn inspect_human_detail_includes_identity_fields() {
     let v = list_json(&[]);
     let procs = v["processes"].as_array().unwrap();
