@@ -1,170 +1,211 @@
-//! CLI entry point for stop — structured process monitoring.
+use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
+use stop::agent::{ProcessQuery, ProcessSelector, SortKey, collect_observation, render};
 
-use clap::Parser;
-use std::io::{self, Write};
-use stop::{FilterExpr, Output, Pipeline, StopError, collect_snapshot, ignore_broken_pipe, watch};
+const DEFAULT_TOP_LIMIT: usize = 20;
+const EXIT_NO_MATCH_OR_AMBIGUOUS: i32 = 3;
 
-/// Command-line arguments for the stop tool.
 #[derive(Parser, Debug)]
 #[command(name = "stop")]
-#[command(about = "Modern process monitoring with structured output")]
-#[command(long_about = "Modern process monitoring with structured output
-
-EXAMPLES:
-    stop                              # Human-readable table
-    stop --json                       # JSON output
-    stop -s chrome                    # Search for chrome processes
-    stop --filter \"cpu > 10\"          # Filter processes
-    stop -s postgres --filter \"mem > 5\" # Combine search and filter
-    stop --watch                      # Live monitoring")]
+#[command(about = "Process and system observation for humans and agents")]
 #[command(version)]
-struct Args {
-    #[arg(long, help = "Output as JSON")]
+struct Cli {
+    #[arg(long, global = true, help = "Emit the versioned machine-readable JSON result")]
     json: bool,
 
-    #[arg(long, help = "Output as CSV")]
-    csv: bool,
-
-    #[arg(
-        short,
-        long,
-        value_name = "TEXT",
-        help = "Search processes by name or command"
-    )]
-    search: Option<String>,
-
-    #[arg(
-        long,
-        value_name = "EXPR",
-        help = "Filter processes (e.g., 'cpu > 10')",
-        long_help = "Filter processes by expression
-
-Fields:    cpu, mem, pid, name, user
-Operators: >, >=, <, <=, ==, !=
-Note:      name == uses case-insensitive substring match
-           user == uses case-sensitive exact match
-Logic:     and, or
-
-Examples:
-  cpu > 50
-  cpu > 10 and mem > 5
-  name == chrome or name == firefox"
-    )]
-    filter: Option<String>,
-
-    #[arg(long, value_name = "FIELD", help = "Sort by: cpu, mem, pid, name")]
-    sort_by: Option<String>,
-
-    #[arg(long, value_name = "N", help = "Show top N processes")]
-    top_n: Option<usize>,
-
-    #[arg(long, help = "Continuous monitoring (watch mode)")]
-    watch: bool,
-
-    #[arg(
-        long,
-        value_name = "SECS",
-        help = "Update interval",
-        default_value_t = 2.0
-    )]
-    interval: f64,
-
-    #[arg(short, long, help = "Show threads, disk I/O, and open files")]
-    verbose: bool,
+    #[command(subcommand)]
+    command: Option<Command>,
 }
 
-// ---------------------------------------------------------------------------
-// Binary-layer helpers (not in the library)
-// ---------------------------------------------------------------------------
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// List matching processes. Exhaustive unless --limit is supplied.
+    List(QueryArgs),
 
-/// Parses a filter expression, printing a user-friendly error and exiting on failure.
-///
-/// In JSON mode, errors are emitted as a structured JSON object for AI agent consumption.
-fn parse_filter_or_exit(expr: &str, json_mode: bool) -> Option<FilterExpr> {
-    match FilterExpr::parse(expr) {
-        Ok(f) => Some(f),
-        Err(e) => {
-            if json_mode {
-                let error_json = serde_json::json!({
-                    "error": "FilterError",
-                    "message": e.to_string(),
-                    "expression": expr,
-                });
-                let _ = writeln!(
-                    io::stdout(),
-                    "{}",
-                    serde_json::to_string_pretty(&error_json).unwrap_or_default()
-                );
-            } else {
-                eprintln!("Error: {e}");
-                eprintln!("Expression: {expr}");
-            }
-            std::process::exit(1);
+    /// Inspect one process selected explicitly.
+    Inspect(InspectArgs),
+
+    /// Show ranked resource consumers. Limited to 20 by default.
+    Top(TopArgs),
+}
+
+#[derive(ClapArgs, Clone, Debug, Default)]
+struct Selectors {
+    #[arg(long)]
+    pid: Option<u32>,
+
+    #[arg(long)]
+    name: Option<String>,
+
+    #[arg(long)]
+    user: Option<String>,
+
+    #[arg(long)]
+    cwd: Option<String>,
+
+    #[arg(long)]
+    parent: Option<u32>,
+
+    #[arg(long, value_name = "PERCENT")]
+    min_cpu: Option<f32>,
+}
+
+impl Selectors {
+    fn is_empty(&self) -> bool {
+        self.pid.is_none()
+            && self.name.is_none()
+            && self.user.is_none()
+            && self.cwd.is_none()
+            && self.parent.is_none()
+            && self.min_cpu.is_none()
+    }
+}
+
+#[derive(ClapArgs, Debug)]
+struct QueryArgs {
+    #[command(flatten)]
+    selectors: Selectors,
+
+    #[arg(long, value_enum, default_value_t = SortArg::Cpu)]
+    sort: SortArg,
+
+    #[arg(short = 'n', long)]
+    limit: Option<usize>,
+}
+
+#[derive(ClapArgs, Debug)]
+struct InspectArgs {
+    #[command(flatten)]
+    selectors: Selectors,
+}
+
+#[derive(ClapArgs, Debug)]
+struct TopArgs {
+    #[command(flatten)]
+    selectors: Selectors,
+
+    #[arg(long, value_enum, default_value_t = SortArg::Cpu)]
+    sort: SortArg,
+
+    #[arg(short = 'n', long, default_value_t = DEFAULT_TOP_LIMIT)]
+    limit: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+enum SortArg {
+    #[default]
+    Cpu,
+    Memory,
+    Pid,
+    Name,
+}
+
+impl From<SortArg> for SortKey {
+    fn from(value: SortArg) -> Self {
+        match value {
+            SortArg::Cpu => SortKey::Cpu,
+            SortArg::Memory => SortKey::Memory,
+            SortArg::Pid => SortKey::Pid,
+            SortArg::Name => SortKey::Name,
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
-fn main() -> Result<(), StopError> {
-    let args = Args::parse();
-
-    // Validate interval
-    if !args.interval.is_finite() || args.interval < 0.0 {
-        return Err(StopError::config(
-            "Interval must be a finite positive number",
-        ));
+impl From<Selectors> for ProcessSelector {
+    fn from(value: Selectors) -> Self {
+        ProcessSelector {
+            pid: value.pid,
+            name: value.name,
+            user: value.user,
+            cwd: value.cwd,
+            parent: value.parent,
+            min_cpu: value.min_cpu,
+        }
     }
-    if args.interval < 0.2 {
-        eprintln!("Warning: Interval below 0.2s may cause high CPU usage");
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        None => run_list(
+            ProcessQuery {
+                selector: ProcessSelector::default(),
+                sort: SortKey::Cpu,
+                limit: Some(DEFAULT_TOP_LIMIT),
+            },
+            cli.json,
+        ),
+        Some(Command::List(args)) => run_list(
+            ProcessQuery {
+                selector: checked_selector(args.selectors, false)?,
+                sort: args.sort.into(),
+                limit: args.limit,
+            },
+            cli.json,
+        ),
+        Some(Command::Top(args)) => run_list(
+            ProcessQuery {
+                selector: checked_selector(args.selectors, false)?,
+                sort: args.sort.into(),
+                limit: Some(args.limit),
+            },
+            cli.json,
+        ),
+        Some(Command::Inspect(args)) => {
+            let selector = checked_selector(args.selectors, true)?;
+            let result = ProcessQuery {
+                selector,
+                sort: SortKey::Pid,
+                limit: None,
+            }
+            .execute(collect_observation()?);
+
+            if cli.json {
+                render::write_json(&result)?;
+            } else if result.processes.len() == 1 {
+                render::write_inspect_text(&result.processes[0])?;
+            } else {
+                render::write_list_text(&result)?;
+            }
+
+            match result.processes.len() {
+                1 => Ok(()),
+                0 => {
+                    eprintln!("no process matched the selector");
+                    std::process::exit(EXIT_NO_MATCH_OR_AMBIGUOUS);
+                }
+                count => {
+                    eprintln!("selector is ambiguous: {count} processes matched");
+                    std::process::exit(EXIT_NO_MATCH_OR_AMBIGUOUS);
+                }
+            }
+        }
     }
+}
 
-    // Build the pipeline
-    let filter = args
-        .filter
-        .as_deref()
-        .and_then(|f| parse_filter_or_exit(f, args.json));
-    let pipeline = Pipeline::new(
-        args.search.clone(),
-        filter,
-        args.sort_by.clone(),
-        args.top_n,
-    );
-
-    // Build the output format
-    let mut output = if args.json {
-        Output::json()
-    } else if args.csv {
-        Output::csv()
+fn run_list(query: ProcessQuery, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let result = query.execute(collect_observation()?);
+    if json {
+        render::write_json(&result)?;
     } else {
-        Output::human(
-            args.search.clone(),
-            args.filter.clone(),
-            args.sort_by.clone(),
-            args.top_n,
-            args.verbose,
-        )
-    };
-
-    // Dispatch
-    if args.watch {
-        return watch::watch_mode(&pipeline, &mut output, args.interval);
+        render::write_list_text(&result)?;
     }
-
-    let mut snapshot = collect_snapshot()?;
-    let had_filter = pipeline.has_active_filter();
-    pipeline.apply(&mut snapshot.processes);
-
-    // Exit 2 when a filter/search was active but nothing matched.
-    // Still write output (valid JSON/CSV/table with empty process list)
-    // so consumers can inspect both exit code and data.
-    if had_filter && snapshot.processes.is_empty() {
-        let _ = output.write(&snapshot);
-        std::process::exit(2);
-    }
-
-    ignore_broken_pipe(output.write(&snapshot))?;
     Ok(())
+}
+
+fn checked_selector(
+    selectors: Selectors,
+    require_selector: bool,
+) -> Result<ProcessSelector, Box<dyn std::error::Error>> {
+    if require_selector && selectors.is_empty() {
+        return Err("inspect requires an explicit selector such as --pid or --name".into());
+    }
+
+    if let Some(cpu) = selectors.min_cpu {
+        if !cpu.is_finite() || cpu < 0.0 {
+            return Err("--min-cpu must be a finite non-negative percentage".into());
+        }
+    }
+
+    Ok(selectors.into())
 }
