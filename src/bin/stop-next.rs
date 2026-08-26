@@ -49,6 +49,17 @@ struct Selectors {
     min_cpu: Option<f32>,
 }
 
+impl Selectors {
+    fn is_empty(&self) -> bool {
+        self.pid.is_none()
+            && self.name.is_none()
+            && self.user.is_none()
+            && self.cwd.is_none()
+            && self.parent.is_none()
+            && self.min_cpu.is_none()
+    }
+}
+
 #[derive(ClapArgs, Debug)]
 struct QueryArgs {
     #[command(flatten)]
@@ -114,7 +125,6 @@ impl From<Selectors> for ProcessSelector {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let observation = collect_observation()?;
 
     match cli.command {
         None => run_list(
@@ -127,7 +137,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         Some(Command::List(args)) => run_list(
             ProcessQuery {
-                selector: checked_selector(args.selectors)?,
+                selector: checked_selector(args.selectors, false)?,
                 sort: args.sort.into(),
                 limit: args.limit,
             },
@@ -135,19 +145,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         Some(Command::Top(args)) => run_list(
             ProcessQuery {
-                selector: checked_selector(args.selectors)?,
+                selector: checked_selector(args.selectors, false)?,
                 sort: args.sort.into(),
                 limit: Some(args.limit),
             },
             cli.json,
         ),
         Some(Command::Inspect(args)) => {
+            let selector = checked_selector(args.selectors, true)?;
             let result = ProcessQuery {
-                selector: checked_selector(args.selectors)?,
+                selector,
                 sort: SortKey::Pid,
                 limit: None,
             }
-            .execute(observation);
+            .execute(collect_observation()?);
 
             if cli.json {
                 render::write_json(&result)?;
@@ -182,11 +193,19 @@ fn run_list(query: ProcessQuery, json: bool) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-fn checked_selector(selectors: Selectors) -> Result<ProcessSelector, Box<dyn std::error::Error>> {
+fn checked_selector(
+    selectors: Selectors,
+    require_selector: bool,
+) -> Result<ProcessSelector, Box<dyn std::error::Error>> {
+    if require_selector && selectors.is_empty() {
+        return Err("inspect requires an explicit selector such as --pid or --name".into());
+    }
+
     if let Some(cpu) = selectors.min_cpu {
         if !cpu.is_finite() || cpu < 0.0 {
             return Err("--min-cpu must be a finite non-negative percentage".into());
         }
     }
+
     Ok(selectors.into())
 }
