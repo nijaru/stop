@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: &str = "stop/1";
+/// Experimental wire schema for the redesign branch. This is intentionally not
+/// the eventual stable `stop/1` contract yet.
+pub const SCHEMA_VERSION: &str = "stop/next-0";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct ProcessIdentity {
