@@ -3,7 +3,10 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use sysinfo::{ProcessStatus, System, Users};
+use sysinfo::{
+    CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, ProcessStatus, RefreshKind, System,
+    Users,
+};
 
 use crate::error::StopError;
 use crate::model::{ProcessInfo, SystemMetrics};
@@ -12,15 +15,25 @@ use crate::model::{ProcessInfo, SystemMetrics};
 /// accurate CPU usage deltas.
 pub const CPU_SAMPLE_INTERVAL_MS: u64 = 200;
 
+/// Only the components stop reads: CPU, memory, processes. Avoids the
+/// startup cost of disks/networks/components that `new_all` would load.
+fn refresh_kind() -> RefreshKind {
+    RefreshKind::nothing()
+        .with_cpu(CpuRefreshKind::everything())
+        .with_memory(MemoryRefreshKind::everything())
+        .with_processes(ProcessRefreshKind::everything())
+}
+
 /// Collects a full system + process sample.
 ///
-/// Blocks for [`CPU_SAMPLE_INTERVAL_MS`] to warm CPU accounting before the
-/// authoritative refresh. This is the single owner of the `System` handle;
-/// callers receive plain data only.
+/// Blocks for [`CPU_SAMPLE_INTERVAL_MS`] between two refreshes so CPU
+/// usage reflects real deltas. This is the single owner of the `System`
+/// handle; callers receive plain data only.
 pub fn collect() -> Result<(SystemMetrics, Vec<ProcessInfo>), StopError> {
-    let mut sys = System::new_all();
+    let kind = refresh_kind();
+    let mut sys = System::new_with_specifics(kind);
     std::thread::sleep(Duration::from_millis(CPU_SAMPLE_INTERVAL_MS));
-    sys.refresh_all();
+    sys.refresh_specifics(kind);
 
     // Username resolution: uid -> name from the live user database.
     let users: HashMap<String, String> = Users::new_with_refreshed_list()

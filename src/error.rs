@@ -10,8 +10,4 @@ pub enum StopError {
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
-
-    /// Invalid configuration or argument combination.
-    #[error("configuration error: {0}")]
-    Config(String),
 }

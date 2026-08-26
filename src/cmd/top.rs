@@ -22,7 +22,7 @@ pub fn run(args: &TopArgs) -> Result<crate::cmd::Outcome, StopError> {
     let (system, all) = collector::collect()?;
 
     let total_processes = all.len();
-    let mut ranked = all.clone();
+    let mut ranked = all; // consume: nothing else reads the full table
     args.sort.sort_processes(&mut ranked);
 
     let snapshot = Snapshot::finish(

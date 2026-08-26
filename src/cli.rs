@@ -88,9 +88,12 @@ pub struct TopArgs {
 
 /// Parses an inspect target that is syntactically a PID.
 ///
-/// Leading zeros would be ambiguous with names, so only canonical decimal
-/// PIDs parse; everything else is treated as a name.
+/// Only canonical decimal PIDs parse — no leading zeros (ambiguous with
+/// names), no signs or whitespace; everything else is treated as a name.
 pub fn parse_pid(target: &str) -> Option<Pid> {
+    if !target.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
     if target.len() > 1 && target.starts_with('0') {
         return None;
     }

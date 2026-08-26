@@ -44,9 +44,15 @@ fn truncate_chars(s: &str, max: usize) -> String {
 
 const NAME_WIDTH: usize = 32;
 
+/// Colors only for terminals, and never when NO_COLOR is set
+/// (https://no-color.org/).
+fn use_color() -> bool {
+    io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
+}
+
 /// Human table shared by `list` and `top`.
 pub fn print_process_table(processes: &[ProcessInfo], header: Option<&str>) -> io::Result<()> {
-    let color = io::stdout().is_terminal();
+    let color = use_color();
 
     let rows: Vec<(String, String, String, String, String, String)> = processes
         .iter()
@@ -70,18 +76,21 @@ pub fn print_process_table(processes: &[ProcessInfo], header: Option<&str>) -> i
         headers
             .0
             .len()
-            .max(rows.iter().map(|r| r.0.len()).max().unwrap_or(0)),
+            .max(rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0)),
         headers
             .1
             .len()
-            .max(rows.iter().map(|r| r.1.len()).max().unwrap_or(0)),
-        headers.2.len(),
+            .max(rows.iter().map(|r| r.1.chars().count()).max().unwrap_or(0)),
+        headers
+            .2
+            .len()
+            .max(rows.iter().map(|r| r.2.chars().count()).max().unwrap_or(0)),
         headers.3.len(),
         headers.4.len(),
         headers
             .5
             .len()
-            .max(rows.iter().map(|r| r.5.len()).max().unwrap_or(0)),
+            .max(rows.iter().map(|r| r.5.chars().count()).max().unwrap_or(0)),
     ];
 
     let stdout = io::stdout();
@@ -158,7 +167,7 @@ pub fn print_process_detail(p: &ProcessInfo) -> io::Result<()> {
     let mut out = stdout.lock();
     let res: io::Result<()> = (|| {
         for (k, v) in kv {
-            if io::stdout().is_terminal() {
+            if use_color() {
                 writeln!(out, "{}: {}", k.bold(), v)?;
             } else {
                 writeln!(out, "{k}: {v}")?;
