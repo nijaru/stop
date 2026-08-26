@@ -9,7 +9,7 @@ const EXIT_NO_MATCH_OR_AMBIGUOUS: i32 = 3;
 #[command(about = "Experimental agent-first process observation CLI")]
 #[command(version)]
 struct Cli {
-    #[arg(long, global = true, help = "Emit the stable machine-readable JSON result")]
+    #[arg(long, global = true, help = "Emit the versioned machine-readable JSON result")]
     json: bool,
 
     #[command(subcommand)]
