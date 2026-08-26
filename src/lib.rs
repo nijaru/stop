@@ -1,8 +1,9 @@
 //! Process and system monitoring with structured output.
 //!
-//! Provides cross-platform system metrics collection with filtering, sorting,
-//! and multiple output formats (JSON, CSV, human-readable).
+//! The existing modules back the stable `stop` binary. The `agent` module is the
+//! experimental ground-up path for the agent-first redesign on this branch.
 
+pub mod agent;
 pub mod data;
 pub mod error;
 pub mod filter;
