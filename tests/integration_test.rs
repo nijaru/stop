@@ -13,6 +13,26 @@ fn stop() -> Command {
     Command::cargo_bin("stop").unwrap()
 }
 
+/// Returns the PID of the oldest live process from a fresh listing.
+///
+/// Tests that re-resolve a PID in a second invocation must not pick
+/// short-lived processes (they die between runs on busy or quiet
+/// machines alike); the oldest process is stable at test timescales.
+fn oldest_pid(v: &Value) -> u64 {
+    let procs = v["processes"].as_array().unwrap();
+    let oldest_start = procs
+        .iter()
+        .map(|p| p["start_time"].as_u64().unwrap())
+        .min()
+        .expect("at least one process");
+    procs
+        .iter()
+        .find(|p| p["start_time"].as_u64().unwrap() == oldest_start)
+        .unwrap()["pid"]
+        .as_u64()
+        .unwrap()
+}
+
 /// Returns the parsed JSON envelope from a `stop list --json` run.
 fn list_json(extra_args: &[&str]) -> Value {
     let output = stop()
@@ -145,9 +165,7 @@ fn list_no_match_exits_two_with_empty_processes() {
 #[test]
 fn inspect_by_pid_from_list_output() {
     let v = list_json(&[]);
-    let procs = v["processes"].as_array().unwrap();
-    let p = &procs[0];
-    let pid = p["pid"].as_u64().unwrap();
+    let pid = oldest_pid(&v);
 
     let output = stop()
         .args(["inspect", &pid.to_string(), "--json"])
@@ -156,10 +174,15 @@ fn inspect_by_pid_from_list_output() {
     assert_eq!(output.status.code(), Some(0));
     let got: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(got["pid"].as_u64().unwrap(), pid);
-    assert_eq!(
-        got["start_time"].as_u64().unwrap(),
-        p["start_time"].as_u64().unwrap()
-    );
+    let expected_start = v["processes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["pid"].as_u64().unwrap() == pid)
+        .unwrap()["start_time"]
+        .as_u64()
+        .unwrap();
+    assert_eq!(got["start_time"].as_u64().unwrap(), expected_start);
 }
 
 #[test]
@@ -219,13 +242,7 @@ fn inspect_ambiguous_name_exits_three_with_candidates() {
 #[test]
 fn inspect_human_detail_includes_identity_fields() {
     let v = list_json(&[]);
-    let procs = v["processes"].as_array().unwrap();
-    // Pick a non-kernel-thread process for richer detail.
-    let target = procs
-        .iter()
-        .find(|p| !p["name"].as_str().unwrap().starts_with("com.apple"))
-        .unwrap_or(&procs[0]);
-    let pid = target["pid"].as_u64().unwrap();
+    let pid = oldest_pid(&v);
 
     let output = stop().args(["inspect", &pid.to_string()]).output().unwrap();
     assert_eq!(output.status.code(), Some(0));
