@@ -5,6 +5,7 @@ use std::io::{self, IsTerminal, Write};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
+use crate::cmd::tree::TreeNode;
 use crate::model::{ProcessInfo, SystemMetrics};
 
 /// Renders a value as compact or pretty JSON to stdout.
@@ -144,6 +145,55 @@ pub fn print_process_table(processes: &[ProcessInfo], header: Option<&str>) -> i
     res.or_else(ignore_broken_pipe)
 }
 
+/// Indented process tree for `tree`: PID and NAME per node, box-drawing
+/// connectors, children nested under their parent.
+pub fn print_process_tree(roots: &[TreeNode]) -> io::Result<()> {
+    write_stdout(render_process_tree(roots, use_color()))
+}
+
+/// Renders the forest as one line per node. Root nodes carry no
+/// connector; every descendant is prefixed with its connector chain.
+pub fn render_process_tree(roots: &[TreeNode], color: bool) -> String {
+    let mut out = String::new();
+    for root in roots {
+        out.push_str(&node_label(root));
+        out.push('\n');
+        for (i, child) in root.children.iter().enumerate() {
+            write_node(&mut out, child, "", i + 1 == root.children.len(), color);
+        }
+    }
+    out
+}
+
+fn node_label(node: &TreeNode) -> String {
+    format!(
+        "{:<6} {}",
+        node.process.pid,
+        truncate_chars(&node.process.name, NAME_WIDTH)
+    )
+}
+
+fn write_node(out: &mut String, node: &TreeNode, prefix: &str, is_last: bool, color: bool) {
+    let connector = if is_last { "└─ " } else { "├─ " };
+    let label = node_label(node);
+    if color {
+        out.push_str(&format!("{}{}{}\n", prefix, connector.dimmed(), label));
+    } else {
+        out.push_str(&format!("{prefix}{connector}{label}\n"));
+    }
+
+    let child_prefix = format!("{prefix}{}", if is_last { "   " } else { "│  " });
+    for (i, child) in node.children.iter().enumerate() {
+        write_node(
+            out,
+            child,
+            &child_prefix,
+            i + 1 == node.children.len(),
+            color,
+        );
+    }
+}
+
 /// Human key/value detail for `inspect`.
 pub fn print_process_detail(p: &ProcessInfo) -> io::Result<()> {
     let kv: Vec<(&str, String)> = vec![
@@ -221,4 +271,59 @@ fn unix_to_rfc3339(secs: u64) -> String {
         .single()
         .map(|t| t.to_rfc3339())
         .unwrap_or_else(|| secs.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ProcessInfo;
+
+    fn node(pid: u32, name: &str, children: Vec<TreeNode>) -> TreeNode {
+        TreeNode {
+            process: ProcessInfo {
+                pid,
+                start_time: 0,
+                ppid: None,
+                name: name.to_string(),
+                exe: None,
+                cmdline: vec![],
+                cwd: None,
+                state: "run".to_string(),
+                user: None,
+                uid: None,
+                cpu_percent: None,
+                rss_bytes: 0,
+                virtual_bytes: 0,
+                threads: None,
+                io_read_bytes: 0,
+                io_written_bytes: 0,
+            },
+            children,
+        }
+    }
+
+    #[test]
+    fn render_nests_children_with_connectors() {
+        // 1 -> [2 -> [3], 4]
+        let roots = vec![node(
+            1,
+            "a",
+            vec![
+                node(2, "b", vec![node(3, "c", vec![])]),
+                node(4, "d", vec![]),
+            ],
+        )];
+        let rendered = render_process_tree(&roots, false);
+        assert_eq!(
+            rendered,
+            "1      a\n".to_string() + "├─ 2      b\n" + "│  └─ 3      c\n" + "└─ 4      d\n"
+        );
+    }
+
+    #[test]
+    fn render_multiple_roots_have_no_connectors() {
+        let roots = vec![node(1, "a", vec![]), node(2, "b", vec![])];
+        let rendered = render_process_tree(&roots, false);
+        assert_eq!(rendered, "1      a\n2      b\n");
+    }
 }

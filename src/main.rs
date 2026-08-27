@@ -28,12 +28,14 @@ fn main() {
         Command::List(a) => a.output.json,
         Command::Inspect(a) => a.output.json,
         Command::Top(a) => a.output.json,
+        Command::Tree(a) => a.output.json,
     };
 
     let result = match &cli.command {
         Command::List(args) => cmd::list::run(args),
         Command::Inspect(args) => cmd::inspect::run(args),
         Command::Top(args) => cmd::top::run(args),
+        Command::Tree(args) => cmd::tree::run(args),
     };
 
     let exit_code = match result {

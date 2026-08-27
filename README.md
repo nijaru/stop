@@ -91,6 +91,20 @@ stop top --sort mem --limit 25     # rank by memory
 stop top --json                    # metrics and snapshot in one document
 ```
 
+### `stop tree` — parent/child hierarchy
+
+```bash
+stop tree                           # full process forest
+stop tree 1431                      # subtree rooted at PID 1431
+stop tree ghostty                   # subtree rooted at that process (name rules like inspect)
+stop tree --json                    # nested JSON: { collected_at, total_processes, roots: [...] }
+```
+
+Every collected process appears exactly once. Roots are processes whose
+parent is absent (exited or unavailable); cycles from PID reuse are broken
+at the first back-edge, with cycle members re-rooted rather than dropped.
+With a name target, ambiguity exits 3 with candidates, like `inspect`.
+
 ## Process fields (P0 model)
 
 | Field | Notes |
@@ -112,7 +126,7 @@ stop top --json                    # metrics and snapshot in one document
 | 0 | Success, at least one process returned |
 | 1 | Operational error |
 | 2 | No match |
-| 3 | Inspect target ambiguous (candidates in error payload) |
+| 3 | Target ambiguous for `inspect`/`tree` (candidates in error payload) |
 
 Enables shell checks like `stop inspect nginx && echo running`.
 
@@ -145,7 +159,7 @@ Collection includes a mandatory ~200 ms warm-up so CPU percentages reflect real 
 
 ## Roadmap
 
-Planned next on this architecture: parent/child trees, port/socket ownership (`stop inspect --port 3000`), time-series sampling, snapshots + diff, and wait-for-process.
+Planned next on this architecture: port/socket ownership (`stop inspect --port 3000`), time-series sampling, snapshots + diff, and wait-for-process.
 
 ## License
 

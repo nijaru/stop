@@ -1,6 +1,6 @@
 //! Process and system monitoring with structured output.
 //!
-//! JSON-first CLI: `list`, `inspect`, `top`.
+//! JSON-first CLI: `list`, `inspect`, `top`, `tree`.
 
 pub mod cli;
 pub mod cmd;

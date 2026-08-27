@@ -10,7 +10,8 @@ use crate::model::SortKey;
     name = "stop",
     about = "Structured process monitoring for AI agents and automation",
     long_about = "JSON-first process monitoring. `stop list` queries the live process table, \
-                  `stop inspect` resolves a single process, `stop top` ranks it."
+                  `stop inspect` resolves a single process, `stop top` ranks it, \
+                  `stop tree` renders the parent/child hierarchy."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -29,6 +30,13 @@ pub enum Command {
     Inspect(InspectArgs),
     /// Show system-wide metrics plus top processes ranked by CPU or memory.
     Top(TopArgs),
+    /// Render the parent/child hierarchy as a tree.
+    ///
+    /// Without a target, renders the full process forest. With a target
+    /// (PID or name, same selection rules as `inspect`), renders the
+    /// subtree rooted at that process. Exit codes: 0 found, 2 not found,
+    /// 3 ambiguous.
+    Tree(TreeArgs),
 }
 
 /// Shared output-format flags across all commands.
@@ -93,6 +101,23 @@ pub struct TopArgs {
     /// Number of processes to show.
     #[arg(short, long, default_value_t = 10)]
     pub limit: usize,
+
+    #[command(flatten)]
+    pub collection: CollectionArgs,
+
+    #[command(flatten)]
+    pub output: OutputArgs,
+}
+
+/// Parses an inspect target that is syntactically a PID.
+///
+/// Only canonical decimal PIDs parse — no leading zeros (ambiguous with
+/// names), no signs or whitespace; everything else is treated as a name.
+#[derive(Parser, Debug)]
+pub struct TreeArgs {
+    /// Optional root: PID or process name (same rules as inspect).
+    /// Without a target, the full process forest is rendered.
+    pub target: Option<String>,
 
     #[command(flatten)]
     pub collection: CollectionArgs,

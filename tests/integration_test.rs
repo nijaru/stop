@@ -283,6 +283,103 @@ fn top_human_output_shows_header() {
     assert!(text.contains("PID"), "table header missing");
 }
 
+/// Collects every pid in the tree forest and asserts the spanning-forest
+/// invariant: count matches total_processes and no pid repeats.
+fn assert_spanning_forest(v: &Value) {
+    let roots = v["roots"].as_array().expect("roots array");
+    let mut pids: Vec<u64> = Vec::new();
+    fn walk(nodes: &[Value], pids: &mut Vec<u64>) {
+        for n in nodes {
+            pids.push(n["process"]["pid"].as_u64().expect("node pid"));
+            let children = n["children"].as_array().expect("children array");
+            walk(children, pids);
+        }
+    }
+    walk(roots, &mut pids);
+
+    let total = v["total_processes"].as_u64().expect("total_processes");
+    assert_eq!(
+        pids.len() as u64,
+        total,
+        "every process appears exactly once"
+    );
+    let unique = pids.iter().collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        unique.len(),
+        pids.len(),
+        "no pid repeated across the forest"
+    );
+}
+
+#[test]
+fn tree_json_is_spanning_forest() {
+    let output = stop().args(["tree", "--json"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!v["roots"].as_array().unwrap().is_empty());
+    assert_spanning_forest(&v);
+}
+
+#[test]
+fn tree_json_subtree_roots_at_pid() {
+    let pid = oldest_pid(&list_json(&[]));
+    let output = stop()
+        .args(["tree", "--json", &pid.to_string()])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let v: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let roots = v["roots"].as_array().unwrap();
+    assert_eq!(roots.len(), 1, "subtree view has a single root");
+    assert_eq!(roots[0]["process"]["pid"].as_u64().unwrap(), pid);
+}
+
+#[test]
+fn tree_no_match_exits_two() {
+    let output = stop()
+        .args(["tree", "--json", "definitely-not-a-process-xyz"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn tree_ambiguous_name_exits_three_with_candidates() {
+    let mut children: Vec<std::process::Child> = (0..2)
+        .map(|_| {
+            std::process::Command::new("sleep")
+                .arg("10")
+                .spawn()
+                .expect("spawn sleep")
+        })
+        .collect();
+
+    let result = stop().args(["tree", "--json", "sleep"]).output().unwrap();
+
+    for child in &mut children {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    assert_eq!(result.status.code(), Some(3));
+    let err: Value = serde_json::from_slice(&result.stderr).unwrap();
+    assert_eq!(err["code"].as_str().unwrap(), "ambiguous");
+    assert!(err["candidates"].as_array().unwrap().len() >= 2);
+}
+
+#[test]
+fn tree_human_output_shows_hierarchy() {
+    let pid = oldest_pid(&list_json(&[]));
+    let output = stop().args(["tree", &pid.to_string()]).output().unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let text = String::from_utf8(output.stdout).unwrap();
+    let first_line = text.lines().next().expect("at least one line");
+    assert!(
+        first_line.starts_with(&pid.to_string()),
+        "first line must be the target root, got {first_line:?}"
+    );
+}
+
 #[test]
 fn fast_mode_reports_null_cpu() {
     let output = stop()

@@ -1,6 +1,8 @@
 pub mod inspect;
 pub mod list;
+pub mod resolve;
 pub mod top;
+pub mod tree;
 
 /// Command outcomes mapped to process exit codes by `main`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
