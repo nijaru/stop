@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use crate::cmd::tree::TreeNode;
 use crate::model::{ProcessInfo, SystemMetrics};
+use crate::ports::{PortReport, Visibility};
 
 /// Renders a value as compact or pretty JSON to stdout.
 ///
@@ -171,6 +172,65 @@ fn node_label(node: &TreeNode) -> String {
         node.process.pid,
         truncate_chars(&node.process.name, NAME_WIDTH)
     )
+}
+
+/// Human table for port ownership results.
+pub fn print_port_report(report: &PortReport) -> io::Result<()> {
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let res: io::Result<()> = (|| {
+        if report.owners.is_empty() {
+            let visibility = visibility_name(report.visibility);
+            if report.visibility == Visibility::Partial {
+                writeln!(
+                    out,
+                    "no visible process owns port {} (visibility: {visibility}; {} inaccessible processes, {} unattributed sockets)",
+                    report.port, report.inaccessible_processes, report.unattributed_sockets
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "no process owns port {} (visibility: {visibility})",
+                    report.port
+                )?;
+            }
+            return Ok(());
+        }
+
+        writeln!(
+            out,
+            "PORT {}  VISIBILITY {}",
+            report.port,
+            visibility_name(report.visibility)
+        )?;
+        writeln!(
+            out,
+            "PID    USER NAME                             PROTO LOCAL STATE"
+        )?;
+        for owner in &report.owners {
+            for socket in &owner.sockets {
+                writeln!(
+                    out,
+                    "{:<6} {:<4} {:<32} {:<5} {:<22} {}",
+                    owner.process.pid,
+                    owner.process.user.as_deref().unwrap_or("-"),
+                    truncate_chars(&owner.process.name, NAME_WIDTH),
+                    socket.protocol,
+                    format!("{}:{}", socket.local_address, socket.local_port),
+                    socket.state
+                )?;
+            }
+        }
+        Ok(())
+    })();
+    res.or_else(ignore_broken_pipe)
+}
+
+fn visibility_name(visibility: Visibility) -> &'static str {
+    match visibility {
+        Visibility::Complete => "complete",
+        Visibility::Partial => "partial",
+    }
 }
 
 fn write_node(out: &mut String, node: &TreeNode, prefix: &str, is_last: bool, color: bool) {

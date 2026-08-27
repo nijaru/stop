@@ -8,6 +8,7 @@ pub mod collector;
 pub mod error;
 pub mod model;
 pub mod output;
+pub mod ports;
 
 pub use cli::{Cli, Command};
 pub use error::StopError;

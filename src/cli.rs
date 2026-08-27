@@ -10,7 +10,7 @@ use crate::model::SortKey;
     name = "stop",
     about = "Structured process monitoring for AI agents and automation",
     long_about = "JSON-first process monitoring. `stop list` queries the live process table, \
-                  `stop inspect` resolves a single process, `stop top` ranks it, \
+                  `stop inspect` resolves a process or port owner, `stop top` ranks it, \
                   `stop tree` renders the parent/child hierarchy."
 )]
 pub struct Cli {
@@ -22,11 +22,12 @@ pub struct Cli {
 pub enum Command {
     /// List running processes with P0 facts (identity, lineage, resources).
     List(ListArgs),
-    /// Resolve exactly one process by PID or name.
+    /// Resolve one process by PID/name, or inspect visible owners of a port.
     ///
     /// Numeric targets are treated as PIDs; otherwise the target matches
-    /// process names (exact case-insensitive first, then substring). Exit
-    /// codes: 0 found, 2 not found, 3 ambiguous (candidates are reported).
+    /// process names (exact case-insensitive first, then substring). The
+    /// `--port` form reports all visible TCP listeners and UDP bindings.
+    /// Exit codes: 0 found, 2 not found, 3 ambiguous (candidates reported).
     Inspect(InspectArgs),
     /// Show system-wide metrics plus top processes ranked by CPU or memory.
     Top(TopArgs),
@@ -87,7 +88,18 @@ pub struct ListArgs {
 #[derive(Parser, Debug)]
 pub struct InspectArgs {
     /// Numeric targets resolve by PID; otherwise by name.
-    pub target: String,
+    #[arg(value_name = "PID_OR_NAME", required_unless_present = "port")]
+    pub target: Option<String>,
+
+    /// Find all visible TCP listeners and UDP bindings on this port.
+    #[arg(
+        long,
+        value_name = "PORT",
+        value_parser = clap::value_parser!(u16).range(1..=65535),
+        conflicts_with = "target",
+        required_unless_present = "target"
+    )]
+    pub port: Option<u16>,
 
     #[command(flatten)]
     pub output: OutputArgs,
@@ -109,10 +121,6 @@ pub struct TopArgs {
     pub output: OutputArgs,
 }
 
-/// Parses an inspect target that is syntactically a PID.
-///
-/// Only canonical decimal PIDs parse — no leading zeros (ambiguous with
-/// names), no signs or whitespace; everything else is treated as a name.
 #[derive(Parser, Debug)]
 pub struct TreeArgs {
     /// Optional root: PID or process name (same rules as inspect).

@@ -68,19 +68,31 @@ skip the warm-up and collect in ~25 ms — but every `cpu_percent`, including
 the system summary, is reported as `null` rather than a wrong number, and
 `--sort cpu` ordering is meaningless in that mode.
 
-### `stop inspect` — resolve exactly one process
+### `stop inspect` — inspect a process or port
 
 ```bash
 stop inspect 1431                  # by PID
 stop inspect ghostty               # by exact name (case-insensitive)
 stop inspect ghost                 # substring fallback
 stop inspect ghostty --json        # machine-readable record
+stop inspect --port 3000           # visible TCP listeners and UDP bindings
+stop inspect --port 3000 --json    # machine-readable ownership report
 ```
 
 Numeric targets are PIDs; otherwise the target matches names — exact match first, then substring. If several processes match, exit code 3 reports candidate identities so you can retry by PID:
 
 ```json
 {"code":"ambiguous","message":"3 processes match 'node'; disambiguate by PID","target":"node","candidates":[{"pid":37259,"start_time":1787722914,"name":"node","user":"nick"}]}
+```
+
+The `--port` form reports all visible TCP listeners and UDP bindings on the
+requested port. TCP connections that are not listening are excluded. Port
+ownership can be incomplete without sufficient permissions; JSON reports this
+as `visibility: "partial"`, along with inaccessible processes and
+unattributed sockets. Port 0 is not a valid query. The JSON shape is:
+
+```json
+{"port":3000,"visibility":"complete","inaccessible_processes":0,"unattributed_sockets":0,"owners":[{"process":{...},"sockets":[{"protocol":"tcp","local_address":"127.0.0.1","local_port":3000,"state":"listen"}]}]}
 ```
 
 ### `stop top` — system summary + ranked processes
@@ -154,7 +166,9 @@ Collection includes a mandatory ~200 ms warm-up so CPU percentages reflect real 
 
 - **Threads**: not reported on macOS (sysinfo limitation); `null`
 - **Disk I/O**: often zero on macOS for idle processes
-- **Windows**: untested
+- **Windows**: untested; port ownership is currently unsupported
+- Port ownership is implemented on Linux and macOS; permissions can make
+  attribution partial
 - Per-process network metrics: not available via sysinfo
 
 ## Roadmap

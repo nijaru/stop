@@ -381,6 +381,88 @@ fn tree_human_output_shows_hierarchy() {
 }
 
 #[test]
+fn inspect_port_reports_tcp_owner() {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port().to_string();
+
+    let output = stop()
+        .args(["inspect", "--port", &port, "--json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["port"].as_u64(), Some(port.parse().unwrap()));
+    assert!(matches!(
+        report["visibility"].as_str(),
+        Some("complete") | Some("partial")
+    ));
+    let owners = report["owners"].as_array().unwrap();
+    let sockets: Vec<&Value> = owners
+        .iter()
+        .flat_map(|owner| owner["sockets"].as_array().unwrap())
+        .collect();
+    assert!(
+        sockets.iter().any(|socket| {
+            socket["protocol"] == "tcp"
+                && socket["local_port"].as_u64() == Some(port.parse().unwrap())
+                && socket["state"] == "listen"
+        }),
+        "listener was not attributed: {report}"
+    );
+}
+
+#[test]
+fn inspect_port_reports_udp_owner() {
+    let socket = std::net::UdpSocket::bind(("127.0.0.1", 0)).unwrap();
+    let port = socket.local_addr().unwrap().port().to_string();
+
+    let output = stop()
+        .args(["inspect", "--port", &port, "--json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let owners = report["owners"].as_array().unwrap();
+    assert!(
+        owners
+            .iter()
+            .flat_map(|owner| owner["sockets"].as_array().unwrap())
+            .any(|socket| {
+                socket["protocol"] == "udp"
+                    && socket["local_port"].as_u64() == Some(port.parse().unwrap())
+                    && socket["state"] == "bound"
+            })
+    );
+}
+
+#[test]
+fn inspect_port_no_match_exits_two_with_report() {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port().to_string();
+    drop(listener);
+
+    let output = stop()
+        .args(["inspect", "--port", &port, "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["port"].as_u64(), Some(port.parse().unwrap()));
+    assert!(report["owners"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn inspect_port_zero_is_usage_error() {
+    let output = stop()
+        .args(["inspect", "--port", "0", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
 fn fast_mode_reports_null_cpu() {
     let output = stop()
         .args(["list", "--fast", "--json", "--limit", "5"])

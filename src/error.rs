@@ -10,4 +10,7 @@ pub enum StopError {
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("port lookup is unsupported on this platform")]
+    UnsupportedPlatform,
 }
