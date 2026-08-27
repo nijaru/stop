@@ -147,11 +147,12 @@ fn decode_address(address: &str) -> Option<String> {
         }
         32 => {
             let mut bytes = [0u8; 16];
-            for (chunk, output) in address
-                .as_bytes()
-                .chunks_exact(8)
-                .zip(bytes.chunks_exact_mut(4))
-            {
+            let (chunks, remainder) = address.as_bytes().as_chunks::<8>();
+            let (outputs, output_remainder) = bytes.as_chunks_mut::<4>();
+            if !remainder.is_empty() || !output_remainder.is_empty() {
+                return None;
+            }
+            for (chunk, output) in chunks.iter().zip(outputs.iter_mut()) {
                 let value = u32::from_str_radix(std::str::from_utf8(chunk).ok()?, 16).ok()?;
                 output.copy_from_slice(&value.to_le_bytes());
             }
