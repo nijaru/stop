@@ -63,10 +63,11 @@ JSON envelope:
 ### Fast mode
 
 Accurate CPU percentages require two refreshes separated by ~200 ms, so a
-default run costs ~240 ms wall time. Pass `--fast` (on `list` and `top`) to
-skip the warm-up and collect in ~25 ms — but every `cpu_percent`, including
-the system summary, is reported as `null` rather than a wrong number, and
-`--sort cpu` ordering is meaningless in that mode.
+default run costs ~240 ms wall time. Pass `--fast` (on `list`, `top`, and
+`sample`) to skip the warm-up and collect in ~25 ms — but every `cpu_percent`,
+including the system summary, is reported as `null` rather than a wrong
+number, and `--sort cpu` ordering is meaningless in that mode. For `sample`,
+all points report null CPU metrics when `--fast` is used.
 
 ### `stop inspect` — inspect a process or port
 
@@ -116,6 +117,26 @@ Every collected process appears exactly once. Roots are processes whose
 parent is absent (exited or unavailable); cycles from PID reuse are broken
 at the first back-edge, with cycle members re-rooted rather than dropped.
 With a name target, ambiguity exits 3 with candidates, like `inspect`.
+
+### `stop sample` — bounded time series
+
+```bash
+stop sample --count 5 --interval 1s --json
+stop sample --count 10 --rate 2 --json
+stop sample --fast --count 3 --interval 250ms
+```
+
+`sample` collects one point by default. `--count` accepts 1–1000 points.
+`--interval` is the target start-to-start period and accepts durations with
+`ms`, `s`, `m`, or `h` suffixes (default `1s`). Use `--rate` instead to request
+1–1000 samples per second; it is converted to the equivalent interval and
+cannot be combined with `--interval`. If collection overruns the period,
+the next point starts immediately; points are never overlapped or backfilled.
+
+JSON is one bounded report: `{ started_at, interval_ms, count, samples }`.
+Each sample contains `collected_at`, `total_processes`, flattened system
+metrics, and a `processes` array. Normal sampling warms up CPU once, then
+uses the interval between refreshes for subsequent CPU deltas.
 
 ## Process fields (P0 model)
 
@@ -173,7 +194,7 @@ Collection includes a mandatory ~200 ms warm-up so CPU percentages reflect real 
 
 ## Roadmap
 
-Planned next on this architecture: port/socket ownership (`stop inspect --port 3000`), time-series sampling, snapshots + diff, and wait-for-process.
+Planned next on this architecture: snapshots + diff, and wait-for-process.
 
 ## License
 

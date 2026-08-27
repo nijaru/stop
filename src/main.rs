@@ -29,6 +29,7 @@ fn main() {
         Command::Inspect(a) => a.output.json,
         Command::Top(a) => a.output.json,
         Command::Tree(a) => a.output.json,
+        Command::Sample(a) => a.output.json,
     };
 
     let result = match &cli.command {
@@ -36,6 +37,7 @@ fn main() {
         Command::Inspect(args) => cmd::inspect::run(args),
         Command::Top(args) => cmd::top::run(args),
         Command::Tree(args) => cmd::tree::run(args),
+        Command::Sample(args) => cmd::sample::run(args),
     };
 
     let exit_code = match result {

@@ -119,6 +119,31 @@ pub struct SystemMetrics {
     pub memory_used_percent: f32,
 }
 
+/// One point in a `sample` time series.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SamplePoint {
+    /// RFC 3339 collection timestamp.
+    pub collected_at: String,
+    /// Number of live processes seen by this collection.
+    pub total_processes: usize,
+    /// System metrics are flattened to match `top`'s JSON contract.
+    #[serde(flatten)]
+    pub system: SystemMetrics,
+    pub processes: Vec<ProcessInfo>,
+}
+
+/// Bounded time-series result for `sample`.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SampleReport {
+    /// RFC 3339 timestamp when sampling began.
+    pub started_at: String,
+    /// Requested target start-to-start period, rounded down to milliseconds.
+    pub interval_ms: u64,
+    /// Number of points requested and returned.
+    pub count: usize,
+    pub samples: Vec<SamplePoint>,
+}
+
 /// Result set for `list` and `top`: matched rows plus completeness metadata.
 ///
 /// Invariants enforced by [`Snapshot::finish`]:

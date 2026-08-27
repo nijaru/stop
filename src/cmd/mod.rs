@@ -1,6 +1,7 @@
 pub mod inspect;
 pub mod list;
 pub mod resolve;
+pub mod sample;
 pub mod top;
 pub mod tree;
 

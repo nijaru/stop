@@ -51,18 +51,20 @@ fn list_json(extra_args: &[&str]) -> Value {
 
 #[test]
 fn help_lists_subcommands() {
-    let cases: [&[&str]; 4] = [
+    let cases: [&[&str]; 6] = [
         &["--help"],
         &["list", "--help"],
         &["inspect", "--help"],
         &["top", "--help"],
+        &["tree", "--help"],
+        &["sample", "--help"],
     ];
     for args in cases {
         let output = stop().args(args).assert().success();
         let stdout = output.get_output().stdout.clone();
         let text = String::from_utf8(stdout).unwrap();
         if args == ["--help"] {
-            for sub in ["list", "inspect", "top"] {
+            for sub in ["list", "inspect", "top", "tree", "sample"] {
                 assert!(text.contains(sub), "help should mention '{sub}'");
             }
         }
@@ -460,6 +462,84 @@ fn inspect_port_zero_is_usage_error() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn sample_json_has_bounded_time_series_contract() {
+    let output = stop()
+        .args([
+            "sample",
+            "--fast",
+            "--count",
+            "2",
+            "--interval",
+            "1ms",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(report["started_at"].is_string());
+    assert_eq!(report["interval_ms"].as_u64(), Some(1));
+    assert_eq!(report["count"].as_u64(), Some(2));
+    let samples = report["samples"].as_array().unwrap();
+    assert_eq!(samples.len(), 2);
+    for sample in samples {
+        assert!(sample["collected_at"].is_string());
+        assert!(sample["total_processes"].is_u64());
+        assert!(sample["processes"].is_array());
+        assert!(sample["cpu_percent"].is_null());
+    }
+}
+
+#[test]
+fn sample_rate_normalizes_to_interval() {
+    let output = stop()
+        .args(["sample", "--fast", "--count", "1", "--rate", "2", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["interval_ms"].as_u64(), Some(500));
+    assert_eq!(report["samples"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn sample_rejects_conflicting_schedule_flags() {
+    let output = stop()
+        .args(["sample", "--fast", "--interval", "1s", "--rate", "2"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn sample_human_output_shows_sample_header() {
+    let output = stop()
+        .args(["sample", "--fast", "--count", "1"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("SAMPLE 1/1"));
+    assert!(text.contains("PID"));
+}
+
+#[test]
+fn sample_cpu_is_available_after_initial_warmup() {
+    let output = stop()
+        .args(["sample", "--count", "2", "--interval", "1ms", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    for sample in report["samples"].as_array().unwrap() {
+        assert!(
+            sample["cpu_percent"].is_number(),
+            "normal sampling must report CPU metrics"
+        );
+    }
 }
 
 #[test]

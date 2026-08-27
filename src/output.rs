@@ -6,7 +6,7 @@ use owo_colors::OwoColorize;
 use serde::Serialize;
 
 use crate::cmd::tree::TreeNode;
-use crate::model::{ProcessInfo, SystemMetrics};
+use crate::model::{ProcessInfo, SamplePoint, SystemMetrics};
 use crate::ports::{PortReport, Visibility};
 
 /// Renders a value as compact or pretty JSON to stdout.
@@ -172,6 +172,16 @@ fn node_label(node: &TreeNode) -> String {
         node.process.pid,
         truncate_chars(&node.process.name, NAME_WIDTH)
     )
+}
+
+/// Human output for one point in a sample time series.
+pub fn print_sample_point(point: &SamplePoint, index: usize, count: usize) -> io::Result<()> {
+    let header = format!(
+        "SAMPLE {index}/{count}  {}  {}",
+        point.collected_at,
+        system_header(&point.system)
+    );
+    print_process_table(&point.processes, Some(&header))
 }
 
 /// Human table for port ownership results.

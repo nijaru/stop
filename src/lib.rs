@@ -13,5 +13,6 @@ pub mod ports;
 pub use cli::{Cli, Command};
 pub use error::StopError;
 pub use model::{
-    ProcessIdentity, ProcessInfo, Snapshot, SortKey, SystemMetrics, format_bytes_parts,
+    ProcessIdentity, ProcessInfo, SamplePoint, SampleReport, Snapshot, SortKey, SystemMetrics,
+    format_bytes_parts,
 };

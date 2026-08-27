@@ -24,27 +24,71 @@ fn refresh_kind() -> RefreshKind {
         .with_processes(ProcessRefreshKind::everything())
 }
 
-/// Collects a full system + process sample.
+/// Owns one `System` across a sequence of samples.
 ///
-/// With `warm_up_cpu`, blocks for [`CPU_SAMPLE_INTERVAL_MS`] between two
-/// refreshes so CPU usage reflects real deltas. Without it (`--fast`),
-/// one refresh runs immediately and per-process CPU readings are `None`.
-/// This is the single owner of the `System` handle; callers receive
-/// plain data only.
-pub fn collect(warm_up_cpu: bool) -> Result<(SystemMetrics, Vec<ProcessInfo>), StopError> {
-    let kind = refresh_kind();
-    let mut sys = System::new_with_specifics(kind);
-    if warm_up_cpu {
-        std::thread::sleep(Duration::from_millis(CPU_SAMPLE_INTERVAL_MS));
-        sys.refresh_specifics(kind);
+/// The initial refresh establishes CPU baselines. Each [`Self::sample`]
+/// refresh then compares against the previous refresh, so callers can choose
+/// the spacing between samples without rebuilding the collector state.
+pub struct Sampler {
+    sys: System,
+    first_sample: bool,
+}
+
+impl Default for Sampler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Sampler {
+    pub fn new() -> Self {
+        Self {
+            sys: System::new_with_specifics(refresh_kind()),
+            first_sample: true,
+        }
     }
 
-    // Username resolution: uid -> name from the live user database.
-    let users: HashMap<String, String> = Users::new_with_refreshed_list()
-        .iter()
-        .map(|u| (u.id().to_string(), u.name().to_string()))
-        .collect();
+    /// Refreshes and returns one plain-data sample.
+    ///
+    /// With `warm_up_cpu`, blocks for [`CPU_SAMPLE_INTERVAL_MS`] before the
+    /// refresh so CPU usage reflects a real delta. `include_cpu` controls
+    /// whether the resulting CPU readings are returned; `--fast` sets both
+    /// options to false, while later points in a normal series set only
+    /// `warm_up_cpu` to false. The first fast point uses the constructor's
+    /// initial refresh; later points refresh against their predecessor.
+    pub fn sample(
+        &mut self,
+        warm_up_cpu: bool,
+        include_cpu: bool,
+    ) -> Result<(SystemMetrics, Vec<ProcessInfo>), StopError> {
+        if self.first_sample {
+            if warm_up_cpu {
+                std::thread::sleep(Duration::from_millis(CPU_SAMPLE_INTERVAL_MS));
+                self.sys.refresh_specifics(refresh_kind());
+            }
+            self.first_sample = false;
+        } else {
+            self.sys.refresh_specifics(refresh_kind());
+        }
 
+        let users: HashMap<String, String> = Users::new_with_refreshed_list()
+            .iter()
+            .map(|u| (u.id().to_string(), u.name().to_string()))
+            .collect();
+        Ok(build_sample(&self.sys, &users, include_cpu))
+    }
+}
+
+/// Collects one full system + process sample with a short-lived sampler.
+pub fn collect(warm_up_cpu: bool) -> Result<(SystemMetrics, Vec<ProcessInfo>), StopError> {
+    Sampler::new().sample(warm_up_cpu, warm_up_cpu)
+}
+
+fn build_sample(
+    sys: &System,
+    users: &HashMap<String, String>,
+    include_cpu: bool,
+) -> (SystemMetrics, Vec<ProcessInfo>) {
     let total_memory = sys.total_memory();
     let memory_used_percent = if total_memory > 0 {
         (sys.used_memory() as f64 / total_memory as f64 * 100.0) as f32
@@ -53,7 +97,7 @@ pub fn collect(warm_up_cpu: bool) -> Result<(SystemMetrics, Vec<ProcessInfo>), S
     };
 
     let metrics = SystemMetrics {
-        cpu_percent: warm_up_cpu.then(|| sys.global_cpu_usage()),
+        cpu_percent: include_cpu.then(|| sys.global_cpu_usage()),
         memory_total_bytes: total_memory,
         memory_used_bytes: sys.used_memory(),
         memory_used_percent,
@@ -81,7 +125,7 @@ pub fn collect(warm_up_cpu: bool) -> Result<(SystemMetrics, Vec<ProcessInfo>), S
             state: state_name(process.status()).to_string(),
             user,
             uid,
-            cpu_percent: warm_up_cpu.then(|| process.cpu_usage()),
+            cpu_percent: include_cpu.then(|| process.cpu_usage()),
             rss_bytes: process.memory(),
             virtual_bytes: process.virtual_memory(),
             threads: process.tasks().map(|t| t.len() as u32),
@@ -90,7 +134,7 @@ pub fn collect(warm_up_cpu: bool) -> Result<(SystemMetrics, Vec<ProcessInfo>), S
         });
     }
 
-    Ok((metrics, processes))
+    (metrics, processes)
 }
 
 fn state_name(status: ProcessStatus) -> &'static str {
