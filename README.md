@@ -216,9 +216,11 @@ cargo fmt --check
 cargo build --release
 ```
 
-`Cargo.lock` is intentionally ignored; CI resolves dependencies freshly on
-Linux and macOS. `bench.sh` compares the current command collection modes
-using an already installed `hyperfine`.
+Development tracks stable Rust through `rust-toolchain.toml`. CI tests both
+stable and the Rust 1.95 minimum on Linux and macOS. `Cargo.lock` is
+intentionally ignored; each CI job resolves dependencies freshly, then uses
+that graph consistently for its checks. `bench.sh` compares the current
+command collection modes using an already installed `hyperfine`.
 
 ## License
 
