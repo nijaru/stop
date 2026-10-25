@@ -9,15 +9,15 @@
 
 use std::collections::HashMap;
 
-use chrono::Utc;
 use serde::Serialize;
 
-use crate::cli::TreeArgs;
+use crate::cli::{CollectionArgs, OutputArgs, TreeArgs};
 use crate::cmd::{Outcome, resolve};
 use crate::collector;
 use crate::error::StopError;
-use crate::model::ProcessInfo;
+use crate::model::{CollectionMetadata, ProcessInfo};
 use crate::output;
+use crate::runtime::Cancellation;
 
 #[derive(Serialize)]
 pub struct TreeNode {
@@ -27,42 +27,55 @@ pub struct TreeNode {
 
 #[derive(Serialize)]
 pub struct TreeReport {
-    pub collected_at: String,
+    #[serde(flatten)]
+    pub collection: CollectionMetadata,
     pub total_processes: usize,
     pub roots: Vec<TreeNode>,
 }
 
-pub fn run(args: &TreeArgs) -> Result<Outcome, StopError> {
-    let (_metrics, procs) = collector::collect(!args.collection.fast)?;
-    let total_processes = procs.len();
-
-    let roots = match &args.target {
-        Some(target) => match resolve::resolve(&procs, target) {
-            Ok(idx) => build_subtree(procs, idx),
-            Err(err) => {
-                resolve::report_error(&err, args.output.json)?;
-                return Ok(if err.code == "ambiguous" {
-                    Outcome::Ambiguous
-                } else {
-                    Outcome::NoMatch
-                });
-            }
+pub fn run(
+    args: &TreeArgs,
+    collection: &CollectionArgs,
+    output_args: &OutputArgs,
+    cancel: &Cancellation,
+) -> Result<Outcome, StopError> {
+    let data = collector::collect(
+        collector::Request {
+            cpu: collection.cpu.is_some(),
+            ..collector::Request::default()
+        },
+        collection.cpu,
+        cancel,
+    )?;
+    // A forest covers every successfully collected row, not PIDs lost during acquisition.
+    let total_processes = data.processes.len();
+    let procs = data.processes;
+    let target = args.name.as_deref().or(args.target.as_deref());
+    let roots = match target {
+        Some(target) => match resolve::resolve(&procs, target, args.name.is_some()) {
+            Ok(index) => build_subtree(procs, index),
+            Err(err) if err.code == "not_found" => vec![],
+            Err(err) => return Err(err.into()),
         },
         None => build_forest(procs),
     };
-
     let report = TreeReport {
-        collected_at: Utc::now().to_rfc3339(),
+        collection: data.metadata,
         total_processes,
         roots,
     };
-
-    if args.output.json {
-        output::print_json(&report, args.output.pretty)?;
+    if output_args.document() {
+        output::print_json(&report, output_args.pretty)?;
+    } else if report.roots.is_empty() {
+        output::print_no_match(target.unwrap_or("any process"))?;
     } else {
-        output::print_process_tree(&report.roots)?;
+        output::print_process_tree(&report.roots, collection.cpu.is_some())?;
     }
-    Ok(Outcome::Success)
+    Ok(if report.roots.is_empty() {
+        Outcome::NoMatch
+    } else {
+        Outcome::Success
+    })
 }
 
 /// Sorted snapshot plus adjacency (parent index -> child indices) and the
@@ -75,7 +88,10 @@ fn prepare(
 
     let mut adj: HashMap<usize, Vec<usize>> = HashMap::new();
     for (i, p) in procs.iter().enumerate() {
-        if let Some(pp) = p.ppid.and_then(|pp| index.get(&pp).copied()) {
+        if let Some(pp) = p.ppid.and_then(|pp| index.get(&pp).copied())
+            && pp != i
+            && !matches!((procs[pp].start_time, p.start_time), (Some(parent), Some(child)) if parent > child)
+        {
             adj.entry(pp).or_default().push(i);
         }
     }
@@ -154,7 +170,9 @@ mod tests {
     fn proc(pid: u32, ppid: Option<u32>, name: &str) -> ProcessInfo {
         ProcessInfo {
             pid,
-            start_time: 1_700_000_000,
+            start_time: Some(1_700_000_000),
+            birth_id: Some(format!("test:{pid}")),
+            unavailable: Default::default(),
             ppid,
             name: name.to_string(),
             exe: None,
@@ -164,11 +182,11 @@ mod tests {
             user: None,
             uid: None,
             cpu_percent: None,
-            rss_bytes: 0,
-            virtual_bytes: 0,
+            rss_bytes: Some(0),
+            virtual_bytes: Some(0),
             threads: None,
-            io_read_bytes: 0,
-            io_written_bytes: 0,
+            io_read_bytes: Some(0),
+            io_written_bytes: Some(0),
         }
     }
 

@@ -1,24 +1,19 @@
 pub mod inspect;
-pub mod list;
+pub mod query;
 pub mod resolve;
 pub mod sample;
-pub mod top;
 pub mod tree;
 
-/// Command outcomes mapped to process exit codes by `main`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
     Success,
     NoMatch,
-    Ambiguous,
 }
-
 impl Outcome {
     pub fn exit_code(self) -> i32 {
         match self {
-            Outcome::Success => 0,
-            Outcome::NoMatch => 2,
-            Outcome::Ambiguous => 3,
+            Self::Success => 0,
+            Self::NoMatch => 2,
         }
     }
 }

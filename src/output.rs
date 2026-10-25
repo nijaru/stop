@@ -1,399 +1,534 @@
-//! Output rendering: JSON (primary) and human tables (secondary).
-
-use std::io::{self, IsTerminal, Write};
+//! Plain terminal reports and explicit JSON. Writers propagate early pipe closure.
 
 use owo_colors::OwoColorize;
 use serde::Serialize;
+use std::io::{self, IsTerminal, Write};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::cmd::tree::TreeNode;
-use crate::model::{ProcessInfo, SamplePoint, SystemMetrics};
+use crate::error::StopError;
+use crate::model::{
+    CollectionMetadata, ProcessInfo, SamplePoint, Snapshot, SystemMetrics, format_bytes_parts,
+};
 use crate::ports::{PortReport, Visibility};
 
-/// Renders a value as compact or pretty JSON to stdout.
-///
-/// Broken pipes are treated as success (standard CLI behavior for piped
-/// consumers like `head`).
 pub fn print_json<T: Serialize>(value: &T, pretty: bool) -> io::Result<()> {
-    let out = if pretty {
-        serde_json::to_string_pretty(value)?
+    let mut out = io::stdout().lock();
+    json_to(&mut out, value, pretty)?;
+    out.flush()
+}
+fn json_to<T: Serialize>(out: &mut impl Write, value: &T, pretty: bool) -> io::Result<()> {
+    let result = if pretty {
+        serde_json::to_writer_pretty(&mut *out, value)
     } else {
-        serde_json::to_string(value)?
+        serde_json::to_writer(&mut *out, value)
     };
-    write_stdout(out)
+    result.map_err(|err| {
+        io::Error::new(
+            err.io_error_kind().unwrap_or(io::ErrorKind::InvalidData),
+            err,
+        )
+    })?;
+    writeln!(out)
 }
-
-fn write_stdout(s: String) -> io::Result<()> {
-    let stdout = io::stdout();
-    let mut lock = stdout.lock();
-    writeln!(lock, "{s}").or_else(ignore_broken_pipe)
+fn write_stdout(value: &str) -> io::Result<()> {
+    let mut out = io::stdout().lock();
+    out.write_all(value.as_bytes())?;
+    out.flush()
 }
-
-fn ignore_broken_pipe(err: io::Error) -> io::Result<()> {
-    if err.kind() == io::ErrorKind::BrokenPipe {
-        Ok(())
-    } else {
-        Err(err)
-    }
-}
-
-/// Truncates on char boundaries with an ellipsis.
-fn truncate_chars(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    s.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
-}
-
-const NAME_WIDTH: usize = 32;
-
-/// Colors only for terminals, and never when NO_COLOR is set
-/// (https://no-color.org/).
 fn use_color() -> bool {
     io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
 }
 
-/// Human table shared by `list` and `top`.
-pub fn print_process_table(processes: &[ProcessInfo], header: Option<&str>) -> io::Result<()> {
-    let color = use_color();
+/// Escape process-controlled text, including invisible direction overrides.
+pub fn safe(value: &str) -> String {
+    let mut result = String::new();
+    for c in value.chars() {
+        if c.is_control()
+            || matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        {
+            result.extend(c.escape_default());
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+fn truncate(value: &str, width: usize) -> String {
+    if value.width() <= width {
+        return value.into();
+    }
+    let mut result = String::new();
+    let mut used = 0;
+    for c in value.chars() {
+        let next = c.width().unwrap_or(0);
+        if used + next > width.saturating_sub(1) {
+            break;
+        }
+        result.push(c);
+        used += next;
+    }
+    result.push('…');
+    result
+}
+fn pad(value: &str, width: usize, right: bool) -> String {
+    let space = " ".repeat(width.saturating_sub(value.width()));
+    if right {
+        format!("{space}{value}")
+    } else {
+        format!("{value}{space}")
+    }
+}
+fn bytes(value: u64) -> String {
+    let (n, u) = format_bytes_parts(value);
+    format!("{n} {u}")
+}
+fn terminal_width() -> usize {
+    if io::stdout().is_terminal() {
+        terminal_size::terminal_size()
+            .map(|(w, _)| usize::from(w.0))
+            .unwrap_or(100)
+    } else {
+        100
+    }
+}
 
-    let rows: Vec<(String, String, String, String, String, String)> = processes
+fn table(processes: &[ProcessInfo], cpu: bool) -> String {
+    let mut headers = vec!["PID", "USER", "NAME"];
+    if cpu {
+        headers.push("CPU%");
+    }
+    headers.push("RSS");
+    let mut rows: Vec<Vec<String>> = processes
         .iter()
         .map(|p| {
-            let (rss_val, rss_unit) = crate::model::format_bytes_parts(p.rss_bytes);
-            (
+            let mut row = vec![
                 p.pid.to_string(),
-                p.user.clone().unwrap_or_else(|| "-".into()),
-                truncate_chars(&p.name, NAME_WIDTH),
-                p.cpu_percent
-                    .map(|c| format!("{c:.1}"))
-                    .unwrap_or_else(|| "-".into()),
-                format!("{rss_val}{rss_unit}"),
-                p.threads
-                    .map(|t| t.to_string())
-                    .unwrap_or_else(|| "-".into()),
-            )
+                safe(p.user.as_deref().or(p.uid.as_deref()).unwrap_or("-")),
+                safe(&p.name),
+            ];
+            if cpu {
+                row.push(
+                    p.cpu_percent
+                        .map(|v| format!("{v:.1}"))
+                        .unwrap_or_else(|| "n/a".into()),
+                );
+            }
+            row.push(p.rss_bytes.map(bytes).unwrap_or_else(|| "n/a".into()));
+            row
         })
         .collect();
-
-    let headers = ("PID", "USER", "NAME", "CPU%", "MEM", "THR");
-    let widths = [
-        headers
-            .0
-            .len()
-            .max(rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0)),
-        headers
-            .1
-            .len()
-            .max(rows.iter().map(|r| r.1.chars().count()).max().unwrap_or(0)),
-        headers
-            .2
-            .len()
-            .max(rows.iter().map(|r| r.2.chars().count()).max().unwrap_or(0)),
-        headers.3.len(),
-        headers.4.len(),
-        headers
-            .5
-            .len()
-            .max(rows.iter().map(|r| r.5.chars().count()).max().unwrap_or(0)),
-    ];
-
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
-    let res: io::Result<()> = (|| {
-        if let Some(h) = header {
-            writeln!(out, "{h}")?;
-        }
-        let head = format!(
-            "{:<pid_w$} {:<usr_w$} {:<name_w$} {:>cpu_w$} {:>mem_w$} {:>thr_w$}",
-            headers.0,
-            headers.1,
-            headers.2,
-            headers.3,
-            headers.4,
-            headers.5,
-            pid_w = widths[0],
-            usr_w = widths[1],
-            name_w = widths[2],
-            cpu_w = widths[3],
-            mem_w = widths[4],
-            thr_w = widths[5]
-        );
-        if color {
-            writeln!(out, "{}", head.bold())?;
-        } else {
-            writeln!(out, "{head}")?;
-        }
-        for r in &rows {
-            writeln!(
-                out,
-                "{:<pid_w$} {:<usr_w$} {:<name_w$} {:>cpu_w$} {:>mem_w$} {:>thr_w$}",
-                r.0,
-                r.1,
-                r.2,
-                r.3,
-                r.4,
-                r.5,
-                pid_w = widths[0],
-                usr_w = widths[1],
-                name_w = widths[2],
-                cpu_w = widths[3],
-                mem_w = widths[4],
-                thr_w = widths[5]
-            )?;
-        }
-        Ok(())
-    })();
-    res.or_else(ignore_broken_pipe)
+    let mut widths: Vec<usize> = headers
+        .iter()
+        .enumerate()
+        .map(|(i, h)| {
+            rows.iter()
+                .map(|r| r[i].width())
+                .max()
+                .unwrap_or(0)
+                .max(h.width())
+        })
+        .collect();
+    // Only names/owners are shortened; numbers stay readable in narrow terminals.
+    widths[1] = widths[1].min(16);
+    let fixed = widths
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != 2)
+        .map(|(_, w)| w)
+        .sum::<usize>()
+        + 2 * (widths.len() - 1);
+    widths[2] = widths[2].min(terminal_width().saturating_sub(fixed).max(8));
+    for row in &mut rows {
+        row[1] = truncate(&row[1], widths[1]);
+        row[2] = truncate(&row[2], widths[2]);
+    }
+    let render = |row: &[String]| {
+        row.iter()
+            .enumerate()
+            .map(|(i, s)| pad(s, widths[i], i == 0 || i >= 3))
+            .collect::<Vec<_>>()
+            .join("  ")
+    };
+    let heading = render(&headers.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+    let mut result = if use_color() {
+        format!("{}\n", heading.bold())
+    } else {
+        format!("{heading}\n")
+    };
+    for row in rows {
+        result.push_str(&render(&row));
+        result.push('\n');
+    }
+    result
 }
 
-/// Indented process tree for `tree`: PID and NAME per node, box-drawing
-/// connectors, children nested under their parent.
-pub fn print_process_tree(roots: &[TreeNode]) -> io::Result<()> {
-    write_stdout(render_process_tree(roots, use_color()))
+pub fn print_snapshot(
+    snapshot: &Snapshot,
+    system: Option<&SystemMetrics>,
+    cpu: bool,
+) -> io::Result<()> {
+    let mut out = String::new();
+    if let Some(system) = system {
+        out.push_str(&system_header(system, cpu));
+        out.push('\n');
+    }
+    if let Some(ms) = snapshot.collection.cpu_interval_ms {
+        out.push_str(&format!("CPU measured over {ms} ms\n"));
+    }
+    if snapshot.returned == 0 {
+        out.push_str("No visible processes matched.\n");
+    } else {
+        out.push_str(&table(&snapshot.processes, cpu));
+    }
+    if snapshot.truncated {
+        out.push_str(&format!(
+            "Showing {} of {} matching processes ({} observed).\n",
+            snapshot.returned, snapshot.matched, snapshot.total_processes
+        ));
+    }
+    append_visibility(&mut out, &snapshot.collection);
+    write_stdout(&out)
+}
+fn append_visibility(out: &mut String, metadata: &CollectionMetadata) {
+    if metadata.inaccessible_processes > 0 {
+        out.push_str(&format!("Visibility is partial: {} processes had limited facts or were lost during collection.\n",metadata.inaccessible_processes));
+    }
 }
 
-/// Renders the forest as one line per node. Root nodes carry no
-/// connector; every descendant is prefixed with its connector chain.
-pub fn render_process_tree(roots: &[TreeNode], color: bool) -> String {
+pub fn print_sample_point(point: &SamplePoint) -> io::Result<()> {
+    write_stdout(&format!(
+        "SAMPLE {}/{}  {}\n",
+        point.index, point.requested_count, point.snapshot.collection.collected_at
+    ))?;
+    print_snapshot(&point.snapshot, Some(&point.system), true)?;
+    if point.skipped_intervals > 0 {
+        write_stdout(&format!(
+            "Skipped {} elapsed schedule slots.\n",
+            point.skipped_intervals
+        ))?;
+    }
+    if point.target_status.as_deref() == Some("no_longer_observed") {
+        write_stdout("The selected process identity is no longer observed.\n")?;
+    }
+    write_stdout("\n")
+}
+
+pub fn print_no_match(target: &str) -> io::Result<()> {
+    write_stdout(&format!(
+        "No visible process matching {}. Search names with stop list --name <name>.\n",
+        safe(&format!("{target:?}"))
+    ))
+}
+
+pub fn print_process_detail(
+    p: &ProcessInfo,
+    metadata: &CollectionMetadata,
+    cpu: bool,
+) -> io::Result<()> {
+    let mut out = format!(
+        "{} · PID {}\nOwner {} · State {}\n\n",
+        safe(&p.name),
+        p.pid,
+        safe(
+            p.user
+                .as_deref()
+                .or(p.uid.as_deref())
+                .unwrap_or("unavailable")
+        ),
+        safe(&p.state)
+    );
+    let unavailable = |field: &str| {
+        format!(
+            "unavailable ({})",
+            p.unavailable
+                .get(field)
+                .map(String::as_str)
+                .unwrap_or("unknown")
+        )
+    };
+    let start = p
+        .start_time
+        .and_then(|s| i64::try_from(s).ok())
+        .and_then(|s| chrono::DateTime::from_timestamp(s, 0));
+    let started = start
+        .map(|s| s.to_rfc3339())
+        .unwrap_or_else(|| "unavailable".into());
+    let argv = p
+        .cmdline
+        .iter()
+        .map(|s| safe(&format!("{s:?}")))
+        .collect::<Vec<_>>()
+        .join(" ");
+    for (label, value) in [
+        ("Started", started),
+        (
+            "Executable",
+            p.exe
+                .as_deref()
+                .map(safe)
+                .unwrap_or_else(|| unavailable("exe")),
+        ),
+        (
+            "Directory",
+            p.cwd
+                .as_deref()
+                .map(safe)
+                .unwrap_or_else(|| unavailable("cwd")),
+        ),
+        (
+            "Arguments",
+            if argv.is_empty() {
+                unavailable("cmdline")
+            } else {
+                argv
+            },
+        ),
+        (
+            "Parent",
+            p.ppid
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "unavailable".into()),
+        ),
+        (
+            "RSS",
+            p.rss_bytes
+                .map(bytes)
+                .unwrap_or_else(|| unavailable("rss_bytes")),
+        ),
+        (
+            "Virtual",
+            p.virtual_bytes
+                .map(bytes)
+                .unwrap_or_else(|| unavailable("virtual_bytes")),
+        ),
+        (
+            "Threads",
+            p.threads
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| unavailable("threads")),
+        ),
+        (
+            "Read total",
+            p.io_read_bytes
+                .map(bytes)
+                .unwrap_or_else(|| unavailable("io_read_bytes")),
+        ),
+        (
+            "Write total",
+            p.io_written_bytes
+                .map(bytes)
+                .unwrap_or_else(|| unavailable("io_written_bytes")),
+        ),
+    ] {
+        out.push_str(&format!("{label:<12} {value}\n"));
+    }
+    if cpu {
+        out.push_str(&format!(
+            "{:<12} {}\n",
+            "CPU",
+            p.cpu_percent
+                .map(|v| format!("{v:.1}%"))
+                .unwrap_or_else(|| unavailable("cpu_percent"))
+        ));
+    }
+    if let Some(ms) = metadata.cpu_interval_ms {
+        out.push_str(&format!("CPU measured over {ms} ms\n"));
+    }
+    append_visibility(&mut out, metadata);
+    write_stdout(&out)
+}
+
+pub fn system_header(metrics: &SystemMetrics, cpu: bool) -> String {
+    let memory = format!(
+        "Memory {} / {}",
+        bytes(metrics.memory_used_bytes),
+        bytes(metrics.memory_total_bytes)
+    );
+    if cpu {
+        format!(
+            "CPU {} · {memory}",
+            metrics
+                .cpu_percent
+                .map(|v| format!("{v:.1}%"))
+                .unwrap_or_else(|| "unavailable".into())
+        )
+    } else {
+        memory
+    }
+}
+
+pub fn print_process_tree(roots: &[TreeNode], cpu: bool) -> io::Result<()> {
+    write_stdout(&render_process_tree(roots, cpu))
+}
+pub fn render_process_tree(roots: &[TreeNode], cpu: bool) -> String {
+    fn label(node: &TreeNode, cpu: bool) -> String {
+        let p = &node.process;
+        format!(
+            "{}  {}  {}{}",
+            p.pid,
+            safe(&p.name),
+            p.rss_bytes.map(bytes).unwrap_or_else(|| "n/a".into()),
+            if cpu {
+                format!(
+                    "  CPU {}",
+                    p.cpu_percent
+                        .map(|v| format!("{v:.1}%"))
+                        .unwrap_or_else(|| "n/a".into())
+                )
+            } else {
+                String::new()
+            }
+        )
+    }
+    fn walk(node: &TreeNode, prefix: &str, last: bool, cpu: bool, out: &mut String) {
+        out.push_str(&format!(
+            "{prefix}{}{}\n",
+            if last { "└─ " } else { "├─ " },
+            label(node, cpu)
+        ));
+        let next = format!("{prefix}{}", if last { "   " } else { "│  " });
+        for (i, child) in node.children.iter().enumerate() {
+            walk(child, &next, i + 1 == node.children.len(), cpu, out);
+        }
+    }
     let mut out = String::new();
     for root in roots {
-        out.push_str(&node_label(root));
+        out.push_str(&label(root, cpu));
         out.push('\n');
         for (i, child) in root.children.iter().enumerate() {
-            write_node(&mut out, child, "", i + 1 == root.children.len(), color);
+            walk(child, "", i + 1 == root.children.len(), cpu, &mut out);
         }
     }
     out
 }
 
-fn node_label(node: &TreeNode) -> String {
-    format!(
-        "{:<6} {}",
-        node.process.pid,
-        truncate_chars(&node.process.name, NAME_WIDTH)
-    )
-}
-
-/// Human output for one point in a sample time series.
-pub fn print_sample_point(point: &SamplePoint, index: usize, count: usize) -> io::Result<()> {
-    let header = format!(
-        "SAMPLE {index}/{count}  {}  {}",
-        point.collected_at,
-        system_header(&point.system)
-    );
-    print_process_table(&point.processes, Some(&header))
-}
-
-/// Human table for port ownership results.
-pub fn print_port_report(report: &PortReport) -> io::Result<()> {
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
-    let res: io::Result<()> = (|| {
-        if report.owners.is_empty() {
-            let visibility = visibility_name(report.visibility);
-            if report.visibility == Visibility::Partial {
-                writeln!(
-                    out,
-                    "no visible process owns port {} (visibility: {visibility}; {} inaccessible processes, {} unattributed sockets)",
-                    report.port, report.inaccessible_processes, report.unattributed_sockets
-                )?;
-            } else {
-                writeln!(
-                    out,
-                    "no process owns port {} (visibility: {visibility})",
-                    report.port
-                )?;
-            }
-            return Ok(());
+pub fn print_port_report(
+    report: &PortReport,
+    metadata: &CollectionMetadata,
+    cpu: bool,
+) -> io::Result<()> {
+    let partial = report.visibility == Visibility::Partial;
+    let mut out = format!(
+        "PORT {} · Visibility {}\n",
+        report.port,
+        if partial {
+            "partial"
+        } else {
+            "complete within the observed scope"
         }
-
-        writeln!(
-            out,
-            "PORT {}  VISIBILITY {}",
-            report.port,
-            visibility_name(report.visibility)
-        )?;
-        writeln!(
-            out,
-            "PID    USER NAME                             PROTO LOCAL STATE"
-        )?;
+    );
+    if report.owners.is_empty() {
+        out.push_str("No visible owner found.\n");
+    } else {
+        out.push_str(&format!(
+            "PID     USER          NAME                  PROTO  LOCAL{}\n",
+            if cpu { "  CPU%" } else { "" }
+        ));
         for owner in &report.owners {
             for socket in &owner.sockets {
+                let addr = if socket.local_address.contains(':') {
+                    format!("[{}]:{}", socket.local_address, socket.local_port)
+                } else {
+                    format!("{}:{}", socket.local_address, socket.local_port)
+                };
+                out.push_str(&format!(
+                    "{:<7} {}  {}  {:<5}  {}{}\n",
+                    owner.process.pid,
+                    pad(
+                        &truncate(&safe(owner.process.user.as_deref().unwrap_or("-")), 12),
+                        12,
+                        false
+                    ),
+                    pad(&truncate(&safe(&owner.process.name), 20), 20, false),
+                    safe(&socket.protocol),
+                    safe(&addr),
+                    if cpu {
+                        format!(
+                            "  {}",
+                            owner
+                                .process
+                                .cpu_percent
+                                .map(|p| format!("{p:.1}"))
+                                .unwrap_or_else(|| "n/a".into())
+                        )
+                    } else {
+                        String::new()
+                    }
+                ));
+            }
+        }
+    }
+    if let Some(ms) = metadata.cpu_interval_ms {
+        out.push_str(&format!("CPU measured over {ms} ms\n"));
+    }
+    append_visibility(&mut out, metadata);
+    if partial {
+        out.push_str(&format!("{} inaccessible processes; {} unattributed sockets. This does not establish that the port is free.\n",report.inaccessible_processes,report.unattributed_sockets));
+    }
+    write_stdout(&out)
+}
+
+pub fn report_error(err: &StopError, machine: bool) -> io::Result<()> {
+    let mut out = io::stderr().lock();
+    if machine {
+        if let StopError::Resolve(err) = err {
+            return json_to(&mut out, err, false);
+        }
+        #[derive(Serialize)]
+        struct ErrorPayload<'a> {
+            code: &'a str,
+            message: String,
+        }
+        let code = match err {
+            StopError::InvalidRequest(_) => "usage",
+            StopError::Interrupted => "interrupted",
+            StopError::UnsupportedPlatform => "unsupported_platform",
+            _ => "operational",
+        };
+        json_to(
+            &mut out,
+            &ErrorPayload {
+                code,
+                message: err.to_string(),
+            },
+            false,
+        )
+    } else {
+        writeln!(out, "stop: {}", safe(&err.to_string()))?;
+        if let StopError::Resolve(err) = err {
+            for c in &err.candidates {
                 writeln!(
                     out,
-                    "{:<6} {:<4} {:<32} {:<5} {:<22} {}",
-                    owner.process.pid,
-                    owner.process.user.as_deref().unwrap_or("-"),
-                    truncate_chars(&owner.process.name, NAME_WIDTH),
-                    socket.protocol,
-                    format!("{}:{}", socket.local_address, socket.local_port),
-                    socket.state
+                    "  PID {}  {}  {}  started {}  {}",
+                    c.pid,
+                    safe(&c.name),
+                    safe(c.user.as_deref().unwrap_or("-")),
+                    c.start_time
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "unavailable".into()),
+                    safe(c.exe.as_deref().or(c.cwd.as_deref()).unwrap_or(""))
                 )?;
             }
         }
         Ok(())
-    })();
-    res.or_else(ignore_broken_pipe)
-}
-
-fn visibility_name(visibility: Visibility) -> &'static str {
-    match visibility {
-        Visibility::Complete => "complete",
-        Visibility::Partial => "partial",
     }
-}
-
-fn write_node(out: &mut String, node: &TreeNode, prefix: &str, is_last: bool, color: bool) {
-    let connector = if is_last { "└─ " } else { "├─ " };
-    let label = node_label(node);
-    if color {
-        out.push_str(&format!("{}{}{}\n", prefix, connector.dimmed(), label));
-    } else {
-        out.push_str(&format!("{prefix}{connector}{label}\n"));
-    }
-
-    let child_prefix = format!("{prefix}{}", if is_last { "   " } else { "│  " });
-    for (i, child) in node.children.iter().enumerate() {
-        write_node(
-            out,
-            child,
-            &child_prefix,
-            i + 1 == node.children.len(),
-            color,
-        );
-    }
-}
-
-/// Human key/value detail for `inspect`.
-pub fn print_process_detail(p: &ProcessInfo) -> io::Result<()> {
-    let kv: Vec<(&str, String)> = vec![
-        ("pid", p.pid.to_string()),
-        ("start_time", unix_to_rfc3339(p.start_time)),
-        ("ppid", opt_u32(&p.ppid)),
-        ("name", p.name.clone()),
-        ("exe", opt_str(&p.exe)),
-        ("cmdline", p.cmdline.join(" ")),
-        ("cwd", opt_str(&p.cwd)),
-        ("state", p.state.clone()),
-        ("user", opt_str(&p.user)),
-        ("uid", opt_str(&p.uid)),
-        ("cpu_percent", opt_f32(p.cpu_percent)),
-        ("rss", human_bytes(p.rss_bytes)),
-        ("virtual", human_bytes(p.virtual_bytes)),
-        ("threads", opt_u32(&p.threads)),
-        ("io_read_total", human_bytes(p.io_read_bytes)),
-        ("io_written_total", human_bytes(p.io_written_bytes)),
-    ];
-
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
-    let res: io::Result<()> = (|| {
-        for (k, v) in kv {
-            if use_color() {
-                writeln!(out, "{}: {}", k.bold(), v)?;
-            } else {
-                writeln!(out, "{k}: {v}")?;
-            }
-        }
-        Ok(())
-    })();
-    res.or_else(ignore_broken_pipe)
-}
-
-/// Human header line summarizing system metrics.
-pub fn system_header(metrics: &SystemMetrics) -> String {
-    let (val, unit) = crate::model::format_bytes_parts(metrics.memory_used_bytes);
-    let (tval, tunit) = crate::model::format_bytes_parts(metrics.memory_total_bytes);
-    let cpu = metrics
-        .cpu_percent
-        .map(|c| format!("{c:.1}%"))
-        .unwrap_or_else(|| "-".into());
-    format!(
-        "CPU {cpu}  MEM {val}{unit}/{tval}{tunit} ({:.1}%)",
-        metrics.memory_used_percent
-    )
-}
-
-fn human_bytes(bytes: u64) -> String {
-    let (v, u) = crate::model::format_bytes_parts(bytes);
-    format!("{v} {u}")
-}
-
-fn opt_str(v: &Option<String>) -> String {
-    v.clone().unwrap_or_else(|| "-".into())
-}
-
-fn opt_u32(v: &Option<u32>) -> String {
-    match v {
-        Some(n) => n.to_string(),
-        None => "-".into(),
-    }
-}
-
-fn opt_f32(v: Option<f32>) -> String {
-    v.map(|c| format!("{c:.2}")).unwrap_or_else(|| "-".into())
-}
-
-fn unix_to_rfc3339(secs: u64) -> String {
-    use chrono::TimeZone;
-    chrono::Utc
-        .timestamp_opt(secs as i64, 0)
-        .single()
-        .map(|t| t.to_rfc3339())
-        .unwrap_or_else(|| secs.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::ProcessInfo;
-
-    fn node(pid: u32, name: &str, children: Vec<TreeNode>) -> TreeNode {
-        TreeNode {
-            process: ProcessInfo {
-                pid,
-                start_time: 0,
-                ppid: None,
-                name: name.to_string(),
-                exe: None,
-                cmdline: vec![],
-                cwd: None,
-                state: "run".to_string(),
-                user: None,
-                uid: None,
-                cpu_percent: None,
-                rss_bytes: 0,
-                virtual_bytes: 0,
-                threads: None,
-                io_read_bytes: 0,
-                io_written_bytes: 0,
-            },
-            children,
-        }
-    }
-
     #[test]
-    fn render_nests_children_with_connectors() {
-        // 1 -> [2 -> [3], 4]
-        let roots = vec![node(
-            1,
-            "a",
-            vec![
-                node(2, "b", vec![node(3, "c", vec![])]),
-                node(4, "d", vec![]),
-            ],
-        )];
-        let rendered = render_process_tree(&roots, false);
+    fn untrusted_text_cannot_control_the_terminal() {
         assert_eq!(
-            rendered,
-            "1      a\n".to_string() + "├─ 2      b\n" + "│  └─ 3      c\n" + "└─ 4      d\n"
+            safe("node\n\x1b[31m\t\u{202e}"),
+            "node\\n\\u{1b}[31m\\t\\u{202e}"
         );
     }
-
     #[test]
-    fn render_multiple_roots_have_no_connectors() {
-        let roots = vec![node(1, "a", vec![]), node(2, "b", vec![])];
-        let rendered = render_process_tree(&roots, false);
-        assert_eq!(rendered, "1      a\n2      b\n");
+    fn truncation_and_alignment_use_display_cells() {
+        assert_eq!(truncate("日本語abcd", 6), "日本…");
+        assert_eq!(pad("日本", 6, false), "日本  ");
+        assert_eq!(pad("日本", 6, true), "  日本");
     }
 }

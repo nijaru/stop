@@ -4,8 +4,9 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 
-use super::{PortScan, PortSocket, SocketRecord};
+use super::{PortScan, PortSocket, SocketRecord, same_birth_id};
 use crate::error::StopError;
+use crate::identity::birth_id;
 
 const TCP_LISTEN: &str = "0A";
 
@@ -36,7 +37,10 @@ pub(super) fn scan(port: u16) -> Result<PortScan, StopError> {
     for entry in fs::read_dir("/proc")? {
         let entry = match entry {
             Ok(entry) => entry,
-            Err(_) => continue,
+            Err(_) => {
+                inaccessible_processes += 1;
+                continue;
+            }
         };
         let pid = match entry
             .file_name()
@@ -46,10 +50,14 @@ pub(super) fn scan(port: u16) -> Result<PortScan, StopError> {
             Some(pid) => pid,
             None => continue,
         };
+        let Some(before) = birth_id(pid) else {
+            inaccessible_processes += 1;
+            continue;
+        };
+        let mut process_records = Vec::new();
         let fd_dir = entry.path().join("fd");
         let fds = match fs::read_dir(&fd_dir) {
             Ok(fds) => fds,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(_) => {
                 inaccessible_processes += 1;
                 continue;
@@ -67,19 +75,29 @@ pub(super) fn scan(port: u16) -> Result<PortScan, StopError> {
             let target = match fs::read_link(fd.path()) {
                 Ok(target) => target,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                Err(_) => {
                     process_inaccessible = true;
                     continue;
                 }
-                Err(_) => continue,
             };
             let inode = match socket_inode(&target) {
                 Some(inode) if sockets_by_inode.contains_key(&inode) => inode,
                 _ => continue,
             };
+            process_records.push(inode);
+        }
+        let after = birth_id(pid);
+        if !same_birth_id(Some(&before), after.as_deref()) {
+            // Do not mark these inodes as matched: the socket table must still
+            // report them as unattributed unless another stable owner sees them.
+            inaccessible_processes += 1;
+            continue;
+        }
+        for inode in process_records {
             matched_inodes.insert(inode);
             records.push(SocketRecord {
                 pid,
+                birth_id: Some(before.clone()),
                 socket: sockets_by_inode[&inode].clone(),
             });
         }

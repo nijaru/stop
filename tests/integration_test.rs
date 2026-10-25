@@ -22,12 +22,12 @@ fn oldest_pid(v: &Value) -> u64 {
     let procs = v["processes"].as_array().unwrap();
     let oldest_start = procs
         .iter()
-        .map(|p| p["start_time"].as_u64().unwrap())
+        .filter_map(|p| p["start_time"].as_u64())
         .min()
         .expect("at least one process");
     procs
         .iter()
-        .find(|p| p["start_time"].as_u64().unwrap() == oldest_start)
+        .find(|p| p["start_time"].as_u64() == Some(oldest_start))
         .unwrap()["pid"]
         .as_u64()
         .unwrap()
@@ -100,7 +100,12 @@ fn list_json_process_fields_present() {
     for p in procs {
         // P0 identity fields must always be present; pid > 0, name non-empty.
         assert!(p["pid"].as_u64().unwrap() > 0);
-        assert!(p["start_time"].is_u64(), "start_time missing or not u64");
+        for field in ["start_time", "rss_bytes", "virtual_bytes"] {
+            assert!(
+                p[field].is_u64() || (p[field].is_null() && p["unavailable"][field] == "unknown"),
+                "unexplained missing {field}"
+            );
+        }
         assert!(!p["name"].as_str().unwrap().is_empty());
         for key in [
             "ppid",
@@ -175,7 +180,22 @@ fn inspect_by_pid_from_list_output() {
         .unwrap();
     assert_eq!(output.status.code(), Some(0));
     let got: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(got["pid"].as_u64().unwrap(), pid);
+    assert_eq!(got["process"]["pid"].as_u64().unwrap(), pid);
+    if got["process"]["birth_id"].is_null() {
+        // Protected system processes may expose basic facts but no native generation.
+        assert_eq!(got["process"]["unavailable"]["birth_id"], "unknown");
+    } else {
+        assert_eq!(
+            got["process"]["birth_id"],
+            v["processes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["pid"] == pid)
+                .unwrap()["birth_id"]
+        );
+    }
+    assert!(got["process"]["cpu_percent"].is_null());
     let expected_start = v["processes"]
         .as_array()
         .unwrap()
@@ -184,7 +204,10 @@ fn inspect_by_pid_from_list_output() {
         .unwrap()["start_time"]
         .as_u64()
         .unwrap();
-    assert_eq!(got["start_time"].as_u64().unwrap(), expected_start);
+    assert_eq!(
+        got["process"]["start_time"].as_u64().unwrap(),
+        expected_start
+    );
 }
 
 #[test]
@@ -194,9 +217,9 @@ fn inspect_unknown_pid_exits_two() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
-    // Error payload goes to stderr as JSON when --json is set.
-    let err: Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(err["code"].as_str().unwrap(), "not_found");
+    assert!(output.stderr.is_empty());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(report["process"].is_null());
 }
 
 #[test]
@@ -249,7 +272,7 @@ fn inspect_human_detail_includes_identity_fields() {
     let output = stop().args(["inspect", &pid.to_string()]).output().unwrap();
     assert_eq!(output.status.code(), Some(0));
     let text = String::from_utf8(output.stdout).unwrap();
-    for field in ["pid:", "start_time:", "state:", "rss:"] {
+    for field in ["PID", "Started", "State", "RSS", "Executable", "Arguments"] {
         assert!(text.contains(field), "human detail missing '{field}'");
     }
 }
@@ -465,96 +488,188 @@ fn inspect_port_zero_is_usage_error() {
 }
 
 #[test]
-fn sample_json_has_bounded_time_series_contract() {
+fn sample_json_has_bounded_filtered_cpu_series() {
+    let pid = std::process::id().to_string();
     let output = stop()
         .args([
             "sample",
-            "--fast",
+            "--pid",
+            &pid,
             "--count",
             "2",
             "--interval",
-            "1ms",
+            "200ms",
             "--json",
         ])
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema_version"], 1);
     assert!(report["started_at"].is_string());
-    assert_eq!(report["interval_ms"].as_u64(), Some(1));
-    assert_eq!(report["count"].as_u64(), Some(2));
+    assert_eq!(report["interval_ms"], 200);
+    assert_eq!(report["count"], 2);
+    assert_eq!(report["requested_count"], 2);
+    assert_eq!(report["completed"], true);
     let samples = report["samples"].as_array().unwrap();
     assert_eq!(samples.len(), 2);
     for sample in samples {
         assert!(sample["collected_at"].is_string());
-        assert!(sample["total_processes"].is_u64());
-        assert!(sample["processes"].is_array());
-        assert!(sample["cpu_percent"].is_null());
+        assert!(sample["cpu_interval_ms"].as_u64().unwrap() >= 200);
+        assert!(sample["cpu_percent"].is_number());
+        assert_eq!(sample["processes"].as_array().unwrap().len(), 1);
+        assert_eq!(sample["processes"][0]["pid"], std::process::id());
+        assert!(sample["processes"][0]["cpu_percent"].is_number());
+        assert_eq!(sample["target_status"], "observed");
     }
+    assert_eq!(
+        samples[0]["processes"][0]["birth_id"],
+        samples[1]["processes"][0]["birth_id"]
+    );
 }
 
 #[test]
 fn sample_rate_normalizes_to_interval() {
     let output = stop()
-        .args(["sample", "--fast", "--count", "1", "--rate", "2", "--json"])
+        .args(["sample", "--count", "1", "--rate", "2", "--json"])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(0));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["interval_ms"].as_u64(), Some(500));
-    assert_eq!(report["samples"].as_array().unwrap().len(), 1);
+    assert_eq!(report["interval_ms"], 500);
 }
 
 #[test]
-fn sample_rejects_conflicting_schedule_flags() {
-    let output = stop()
-        .args(["sample", "--fast", "--interval", "1s", "--rate", "2"])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(1));
+fn invalid_requests_are_structured_usage_errors() {
+    let cases: &[&[&str]] = &[
+        &["sample", "--interval", "1s", "--rate", "2"],
+        &["sample", "--interval", "1ms"],
+        &["sample", "--rate", "1000"],
+        &["sample", "--cpu"],
+        &["list", "--fast"],
+        &["list", "--limit", "0"],
+        &["list", "--cpu=1ms"],
+        &["top", "--sort", "pid"],
+        &["inspect", "sleep", "--name", "sleep"],
+        &["list", "--jsonl"],
+    ];
+    for args in cases {
+        let output = stop().arg("--json").args(*args).output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert!(output.stdout.is_empty());
+        let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["code"], "usage");
+    }
 }
 
 #[test]
-fn sample_human_output_shows_sample_header() {
-    let output = stop()
-        .args(["sample", "--fast", "--count", "1"])
+fn human_tables_only_show_requested_cpu_and_sampling_is_bounded() {
+    let plain = stop().args(["list", "--limit", "1"]).output().unwrap();
+    let text = String::from_utf8(plain.stdout).unwrap();
+    assert!(text.contains("RSS") && !text.contains("CPU%"));
+    let sample = stop()
+        .args(["sample", "--count", "1", "--limit", "1"])
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(0));
-    let text = String::from_utf8(output.stdout).unwrap();
-    assert!(text.contains("SAMPLE 1/1"));
-    assert!(text.contains("PID"));
+    assert!(sample.status.success());
+    let text = String::from_utf8(sample.stdout).unwrap();
+    assert!(text.contains("SAMPLE 1/1") && text.contains("CPU%"));
+    assert!(text.contains("Showing 1 of"));
 }
 
 #[test]
-fn sample_cpu_is_available_after_initial_warmup() {
-    let output = stop()
-        .args(["sample", "--count", "2", "--interval", "1ms", "--json"])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(0));
+fn inventory_is_pid_ordered_without_cpu_but_can_request_measurement() {
+    let plain = list_json(&[]);
+    let rows = plain["processes"].as_array().unwrap();
+    assert!(
+        rows.windows(2)
+            .all(|pair| pair[0]["pid"].as_u64() < pair[1]["pid"].as_u64())
+    );
+    assert!(
+        rows.iter()
+            .all(|p| p["cpu_percent"].is_null()
+                && p["unavailable"]["cpu_percent"] == "not_requested")
+    );
+    assert!(plain["cpu_interval_ms"].is_null());
+    let measured = list_json(&["--pid", &std::process::id().to_string(), "--cpu=250ms"]);
+    assert!(measured["cpu_interval_ms"].as_u64().unwrap() >= 250);
+    assert!(measured["processes"][0]["cpu_percent"].is_number());
+}
+
+#[test]
+fn bare_stop_is_top_and_pretty_implies_json() {
+    let output = stop().arg("--pretty").output().unwrap();
+    assert!(output.status.success());
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    for sample in report["samples"].as_array().unwrap() {
-        assert!(
-            sample["cpu_percent"].is_number(),
-            "normal sampling must report CPU metrics"
-        );
+    assert!(report["memory_total_bytes"].is_number());
+    assert!(report["cpu_percent"].is_number());
+    assert!(report["returned"].as_u64().unwrap() <= 10);
+}
+
+#[test]
+fn memory_ranking_is_immediate_and_filterable() {
+    let output = stop()
+        .args([
+            "top",
+            "--sort",
+            "mem",
+            "--pid",
+            &std::process::id().to_string(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(report["cpu_percent"].is_null());
+    assert!(report["cpu_interval_ms"].is_null());
+    assert_eq!(report["processes"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn inspect_and_tree_do_not_silently_broaden_names() {
+    let mut child = std::process::Command::new("sleep")
+        .arg("10")
+        .spawn()
+        .unwrap();
+    let results = ["inspect", "tree"]
+        .map(|command| stop().args([command, "--name", "slee", "--json"]).output());
+    child.kill().unwrap();
+    child.wait().unwrap();
+    for output in results {
+        let output = output.unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stderr.is_empty());
+        let _: Value = serde_json::from_slice(&output.stdout).unwrap();
     }
 }
 
 #[test]
-fn fast_mode_reports_null_cpu() {
+fn sample_no_match_still_emits_every_point() {
     let output = stop()
-        .args(["list", "--fast", "--json", "--limit", "5"])
+        .args([
+            "sample",
+            "--name",
+            "zz-no-process-xyz",
+            "--count",
+            "2",
+            "--interval",
+            "200ms",
+            "--jsonl",
+        ])
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(0));
-    let v: Value = serde_json::from_slice(&output.stdout).unwrap();
-    for p in v["processes"].as_array().unwrap() {
-        assert!(
-            p["cpu_percent"].is_null(),
-            "--fast must report cpu_percent as null, got {}",
-            p["cpu_percent"]
-        );
-    }
+    assert_eq!(output.status.code(), Some(2));
+    let points: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(points.len(), 2);
+    assert!(points.iter().all(|p| p["returned"] == 0));
 }

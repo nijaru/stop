@@ -27,6 +27,9 @@ chrono = "0.4"
 thiserror = "2.0"
 owo-colors = "4.1"
 libc = "0.2"
+ctrlc = "3.5"
+unicode-width = "0.2"
+terminal_size = "0.4"
 
 [dev-dependencies]
 assert_cmd = "2.0"

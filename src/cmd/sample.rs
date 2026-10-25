@@ -1,60 +1,229 @@
-//! `stop sample` — collect a bounded process and system time series.
-
-use std::time::Instant;
+//! Finite, scoped sampling. Scheduling skips missed slots instead of catching up.
 
 use chrono::Utc;
+use std::time::{Duration, Instant};
 
-use crate::cli::SampleArgs;
-use crate::cmd::Outcome;
-use crate::collector;
+use super::Outcome;
+use crate::cli::{DEFAULT_CPU_WINDOW, OutputArgs, SampleArgs};
+use crate::collector::{self, Request, Sampler, TargetObservation};
 use crate::error::StopError;
-use crate::model::{SamplePoint, SampleReport};
+use crate::model::{ProcessIdentity, ProcessInfo, SamplePoint, SampleReport, Snapshot, SortKey};
 use crate::output;
+use crate::runtime::Cancellation;
 
-pub fn run(args: &SampleArgs) -> Result<Outcome, StopError> {
+struct Schedule {
+    next: Instant,
+    period: Duration,
+}
+impl Schedule {
+    fn advance(&mut self, now: Instant) -> usize {
+        self.next += self.period;
+        if self.next >= now {
+            return 0;
+        }
+        let missed = now.duration_since(self.next).as_nanos() / self.period.as_nanos() + 1;
+        // A run is bounded to 1000 points and a period of at least 200ms.
+        let missed =
+            u32::try_from(missed).expect("overrun fits in 27 years of minimum-period slots");
+        self.next += self.period * missed;
+        missed as usize
+    }
+}
+
+#[derive(Default)]
+struct PinnedTarget {
+    identity: Option<ProcessIdentity>,
+}
+impl PinnedTarget {
+    fn observe(&mut self, identity: ProcessIdentity) -> bool {
+        if let Some(bound) = &self.identity {
+            *bound == identity
+        } else {
+            self.identity = Some(identity);
+            true
+        }
+    }
+
+    fn restrict(
+        &mut self,
+        target: &TargetObservation,
+        rows: &mut Vec<ProcessInfo>,
+    ) -> Result<String, StopError> {
+        let observed = match target {
+            TargetObservation::Observed(identity) => self.observe(identity.clone()),
+            TargetObservation::Unavailable if self.identity.is_none() => {
+                return Err(StopError::Operational(
+                    "cannot safely sample this PID: native process identity is unavailable".into(),
+                ));
+            }
+            _ => false,
+        };
+        if let Some(identity) = &self.identity {
+            rows.retain(|p| {
+                p.pid == identity.pid && p.birth_id.as_deref() == Some(identity.birth_id.as_str())
+            });
+            Ok(if observed {
+                "observed"
+            } else {
+                "no_longer_observed"
+            }
+            .into())
+        } else {
+            Ok("not_observed_yet".into())
+        }
+    }
+}
+
+pub fn run(
+    args: &SampleArgs,
+    output_args: &OutputArgs,
+    cancel: &Cancellation,
+) -> Result<Outcome, StopError> {
     let period = args.period();
+    let interval_ms = collector::millis(period);
     let started_at = Utc::now().to_rfc3339();
-    let mut sampler = collector::Sampler::new();
-    let mut samples = Vec::with_capacity(args.count);
-    let mut next_deadline = Instant::now();
-
-    for index in 0..args.count {
-        if let Some(delay) = next_deadline.checked_duration_since(Instant::now()) {
-            std::thread::sleep(delay);
-        }
-
-        // The first accurate point needs the CPU baseline warm-up. Later
-        // points use the interval since the previous refresh as their delta.
-        let warm_up_cpu = !args.collection.fast && index == 0;
-        let include_cpu = !args.collection.fast;
-        let (system, mut processes) = sampler.sample(warm_up_cpu, include_cpu)?;
-        processes.sort_by_key(|process| process.pid);
-        samples.push(SamplePoint {
-            collected_at: Utc::now().to_rfc3339(),
-            total_processes: processes.len(),
-            system,
-            processes,
-        });
-
-        next_deadline = next_deadline
-            .checked_add(period)
-            .unwrap_or_else(Instant::now);
-    }
-
-    let report = SampleReport {
-        started_at,
-        interval_ms: period.as_millis() as u64,
-        count: args.count,
-        samples,
-    };
-
-    if args.output.json {
-        output::print_json(&report, args.output.pretty)?;
+    let mut sampler = Sampler::new(Request::query(&args.query, true));
+    let mut pin = PinnedTarget::default();
+    let mut baseline = sampler.sample();
+    let mut failure = if args.query.pid.is_some() {
+        pin.restrict(&baseline.target, &mut baseline.processes)
+            .err()
     } else {
-        for (index, sample) in report.samples.iter().enumerate() {
-            output::print_sample_point(sample, index + 1, report.count)?;
+        None
+    };
+    let mut samples = Vec::new();
+    let mut emitted = 0;
+    let mut any_match = false;
+    if failure.is_none()
+        && let Err(err) = cancel.wait_until(Instant::now() + DEFAULT_CPU_WINDOW)
+    {
+        return Err(err.into());
+    }
+    let mut schedule = Schedule {
+        next: Instant::now(),
+        period,
+    };
+    let mut skipped_intervals = 0;
+    while failure.is_none() && emitted < args.count {
+        let deadline = sampler
+            .next_cpu_deadline()
+            .map(|ready| ready.max(schedule.next))
+            .unwrap_or(schedule.next);
+        if !cancel.wait_until(deadline)? {
+            break;
+        }
+        let mut data = sampler.sample();
+        let target_status = if args.query.pid.is_some() {
+            match pin.restrict(&data.target, &mut data.processes) {
+                Ok(status) => Some(status),
+                Err(err) => {
+                    failure = Some(err);
+                    break;
+                }
+            }
+        } else {
+            None
+        };
+        args.query
+            .sort
+            .unwrap_or(SortKey::Cpu)
+            .sort_processes(&mut data.processes);
+        let snapshot = Snapshot::finish(
+            data.metadata,
+            data.total_processes,
+            data.processes,
+            Some(args.query.limit.unwrap_or(10)),
+        );
+        any_match |= snapshot.returned > 0;
+        let point = SamplePoint {
+            index: emitted + 1,
+            requested_count: args.count,
+            interval_ms,
+            skipped_intervals,
+            target_status,
+            snapshot,
+            system: data.system,
+        };
+        if output_args.jsonl {
+            output::print_json(&point, false)?;
+        } else if !output_args.document() {
+            output::print_sample_point(&point)?;
+        }
+        if output_args.document() {
+            samples.push(point);
+        }
+        emitted += 1;
+        // Include rendering and pipe backpressure in overrun handling.
+        if emitted < args.count {
+            skipped_intervals = schedule.advance(Instant::now());
         }
     }
+    let interrupted = cancel.interrupted();
+    if output_args.document() {
+        output::print_json(
+            &SampleReport {
+                schema_version: crate::model::SCHEMA_VERSION,
+                started_at,
+                interval_ms,
+                requested_count: args.count,
+                count: emitted,
+                completed: emitted == args.count && failure.is_none() && !interrupted,
+                interrupted,
+                samples,
+            },
+            output_args.pretty,
+        )?;
+    }
+    if let Some(err) = failure {
+        return Err(err);
+    }
+    if interrupted {
+        return Err(StopError::Interrupted);
+    }
+    Ok(if any_match {
+        Outcome::Success
+    } else {
+        Outcome::NoMatch
+    })
+}
 
-    Ok(Outcome::Success)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn pinned_pid_does_not_rebind_after_reuse() {
+        let mut pin = PinnedTarget::default();
+        let original = ProcessIdentity {
+            pid: 42,
+            birth_id: "original".into(),
+        };
+        // Even when additional selectors leave no returned rows, the PID is bound.
+        let mut rows = vec![];
+        pin.restrict(&TargetObservation::Observed(original.clone()), &mut rows)
+            .unwrap();
+        pin.restrict(&TargetObservation::NotObserved, &mut rows)
+            .unwrap();
+        pin.restrict(
+            &TargetObservation::Observed(ProcessIdentity {
+                pid: 42,
+                birth_id: "replacement".into(),
+            }),
+            &mut rows,
+        )
+        .unwrap();
+        assert_eq!(pin.identity, Some(original));
+    }
+
+    #[test]
+    fn overrun_skips_slots_and_never_catches_up() {
+        let origin = Instant::now();
+        let mut schedule = Schedule {
+            next: origin,
+            period: Duration::from_secs(1),
+        };
+        assert_eq!(schedule.advance(origin + Duration::from_millis(2500)), 2);
+        assert_eq!(schedule.next, origin + Duration::from_secs(3));
+        assert_eq!(schedule.advance(origin + Duration::from_millis(3100)), 0);
+        assert_eq!(schedule.next, origin + Duration::from_secs(4));
+    }
 }

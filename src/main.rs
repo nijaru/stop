@@ -1,73 +1,66 @@
-//! Entry point: parse args, dispatch commands, map outcomes to exit codes.
-//!
-//! Exit codes: 0 success, 1 operational/usage error, 2 no-match,
-//! 3 ambiguous inspect target. Code 2 is reserved for query results;
-//! argument parsing failures report as 1.
+//! Parse, dispatch, and map outcomes once. Human output is the default.
 
-use std::io::Write;
-
-use clap::Parser as _;
-use serde::Serialize;
-
-use stop::cli::{Cli, Command};
-use stop::cmd::{self};
+use clap::Parser;
+use stop::cli::{Cli, Command, QueryArgs};
+use stop::cmd;
 use stop::error::StopError;
+use stop::runtime::Cancellation;
 
-fn main() {
-    let cli = match Cli::try_parse() {
+fn main() -> std::process::ExitCode {
+    let raw: Vec<_> = std::env::args_os().collect();
+    // Recognize explicit formats even when clap rejects the rest of the request.
+    let machine = raw
+        .iter()
+        .skip(1)
+        .take_while(|s| s.as_os_str() != "--")
+        .any(|s| matches!(s.to_str(), Some("--json" | "--pretty" | "--jsonl")));
+    let cli = match Cli::try_parse_from(raw) {
         Ok(cli) => cli,
         Err(err) => {
-            // clap's default exit code (2) would collide with no-match.
-            let code = if err.use_stderr() { 1 } else { 0 };
-            let _ = err.print();
-            std::process::exit(code);
+            if !err.use_stderr() {
+                let _ = err.print();
+                return std::process::ExitCode::SUCCESS;
+            }
+            let _ =
+                stop::output::report_error(&StopError::InvalidRequest(err.to_string()), machine);
+            return std::process::ExitCode::from(1);
         }
     };
-
-    let json = match &cli.command {
-        Command::List(a) => a.output.json,
-        Command::Inspect(a) => a.output.json,
-        Command::Top(a) => a.output.json,
-        Command::Tree(a) => a.output.json,
-        Command::Sample(a) => a.output.json,
-    };
-
-    let result = match &cli.command {
-        Command::List(args) => cmd::list::run(args),
-        Command::Inspect(args) => cmd::inspect::run(args),
-        Command::Top(args) => cmd::top::run(args),
-        Command::Tree(args) => cmd::tree::run(args),
-        Command::Sample(args) => cmd::sample::run(args),
-    };
-
-    let exit_code = match result {
+    let result = (|| {
+        cli.validate().map_err(StopError::InvalidRequest)?;
+        let cancel = Cancellation::install().map_err(|err| {
+            StopError::Operational(format!("cannot install interrupt handler: {err}"))
+        })?;
+        let defaults = QueryArgs::default();
+        match &cli.command {
+            None => cmd::query::run(&defaults, true, &cli.collection, &cli.output, &cancel),
+            Some(Command::List(args)) => {
+                cmd::query::run(args, false, &cli.collection, &cli.output, &cancel)
+            }
+            Some(Command::Top(args)) => {
+                cmd::query::run(args, true, &cli.collection, &cli.output, &cancel)
+            }
+            Some(Command::Inspect(args)) => {
+                cmd::inspect::run(args, &cli.collection, &cli.output, &cancel)
+            }
+            Some(Command::Tree(args)) => {
+                cmd::tree::run(args, &cli.collection, &cli.output, &cancel)
+            }
+            Some(Command::Sample(args)) => cmd::sample::run(args, &cli.output, &cancel),
+        }
+    })();
+    let code = match result {
         Ok(outcome) => outcome.exit_code(),
+        Err(StopError::Io(err)) if err.kind() == std::io::ErrorKind::BrokenPipe => 0,
         Err(err) => {
-            report_error(&err, json);
-            1
+            let code = match &err {
+                StopError::Interrupted => 130,
+                StopError::Resolve(e) if e.code == "ambiguous" => 3,
+                _ => 1,
+            };
+            let _ = stop::output::report_error(&err, cli.output.machine());
+            code
         }
     };
-
-    std::process::exit(exit_code);
-}
-
-#[derive(Serialize)]
-struct ErrorPayload<'a> {
-    code: &'a str,
-    message: String,
-}
-
-fn report_error(err: &StopError, json: bool) {
-    let mut stderr = std::io::stderr().lock();
-    if json {
-        let payload = ErrorPayload {
-            code: "internal",
-            message: err.to_string(),
-        };
-        if let Ok(line) = serde_json::to_string(&payload) {
-            let _ = writeln!(stderr, "{line}");
-            return;
-        }
-    }
-    let _ = writeln!(stderr, "stop: {err}");
+    std::process::ExitCode::from(code as u8)
 }

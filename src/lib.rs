@@ -1,14 +1,14 @@
-//! Process and system monitoring with structured output.
-//!
-//! JSON-first CLI: `list`, `inspect`, `top`, `tree`.
+//! One-shot process inspection and finite sampling, with explicit structured output.
 
 pub mod cli;
 pub mod cmd;
 pub mod collector;
 pub mod error;
+pub mod identity;
 pub mod model;
 pub mod output;
 pub mod ports;
+pub mod runtime;
 
 pub use cli::{Cli, Command};
 pub use error::StopError;

@@ -1,38 +1,20 @@
 #!/usr/bin/env bash
-# Simple benchmark for stop collection overhead using hyperfine
-
+# Compare current collection modes. Install hyperfine separately if needed.
 set -euo pipefail
+cd "$(dirname "$0")"
 
-BINARY="./target/release/stop"
-
-echo "stop Performance Benchmark"
-echo "=========================="
-echo ""
-
-# Build release binary if needed
-if [ ! -f "$BINARY" ]; then
-    echo "Building release binary..."
-    cargo build --release
-    echo ""
+if ! command -v hyperfine >/dev/null 2>&1; then
+    echo "hyperfine is required (https://github.com/sharkdp/hyperfine)" >&2
+    exit 1
 fi
+cargo build --release
+binary=./target/release/stop
 
-# Check if hyperfine is available
-if ! command -v hyperfine &> /dev/null; then
-    echo "hyperfine not found. Installing..."
-    cargo install hyperfine
-    echo ""
-fi
-
-echo "Benchmarking JSON output (most common for AI agents)..."
 hyperfine --warmup 3 \
-    "$BINARY --json" \
-    "$BINARY --json --filter 'cpu > 1'" \
-    "$BINARY --json --filter 'cpu > 1 and mem > 0.1'"
+    --command-name inventory "$binary list --json" \
+    --command-name measured-inventory "$binary list --cpu --json" \
+    --command-name memory-ranking "$binary top --sort mem --json" \
+    --command-name pid-inspection "$binary inspect $$ --json"
 
-echo ""
-echo "Note: Collection includes mandatory 200ms sleep for CPU accuracy."
-echo "Overhead = Total time - 200ms"
-
-# Get process count
-process_count=$($BINARY --json | jq '.processes | length')
-echo "Process count tested: $process_count"
+echo "CPU measurement includes a 250ms warm-up; other commands have no deliberate wait."
+"$binary" list --json | python3 -c 'import json,sys; print("Observed processes:", json.load(sys.stdin)["total_processes"])'

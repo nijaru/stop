@@ -1,200 +1,224 @@
 # stop
 
-**stop** (structured top) is a process monitoring tool built for AI agents and automation: JSON-first process data instead of human-oriented text parsing.
-
-```
-$ stop list --json | jq '.processes[0]'
-{
-  "pid": 1431,
-  "start_time": 1787355876,
-  "ppid": 1,
-  "name": "ghostty",
-  "exe": "/Applications/Ghostty.app/Contents/MacOS/ghostty",
-  "cmdline": ["/Applications/Ghostty.app/Contents/MacOS/ghostty"],
-  "cwd": "/",
-  "state": "sleep",
-  "user": "nick",
-  "uid": "501",
-  "cpu_percent": 10.4,
-  "rss_bytes": 648085504,
-  "virtual_bytes": 448247283712,
-  "threads": null,
-  "io_read_bytes": 68861952,
-  "io_written_bytes": 364544
-}
-```
-
-## Install
+Inspect processes without leaving the shell. **stop** prints one-shot reports
+and finite samples—not a full-screen monitor. Human-readable output is the
+default; use `--json` for scripts or `--jsonl` for streaming samples.
 
 ```bash
-cargo install --path .
+cargo install --path .                 # Rust 1.95 or newer
+stop                                  # system summary + top 10 by CPU
+stop list --name postgres              # immediate process inventory
+stop inspect 1431                      # identity, arguments, paths and resources
+stop top --sort mem --limit 20         # rank by RSS, without a CPU warm-up
+stop sample --name node --count 5      # five filtered reports as they arrive
 ```
 
-Requires Rust stable. Tested on macOS and Linux.
+Supported and tested on Linux and macOS. There is no daemon, automatic pager,
+or unbounded watch mode. Despite its name, stop does not terminate processes.
 
-## Usage
+## Commands
 
-### `stop list` — query the process table
+### Inventory and ranking
 
 ```bash
-stop list                          # human-readable table, sorted by CPU
-stop list --name postgres          # case-insensitive substring match
-stop list --user nick              # by username or raw UID
-stop list --sort mem --limit 20    # top 20 by memory
-stop list --json                   # full JSON envelope
-stop list --fast                   # ~24ms instead of ~240ms (see below)
+stop list                             # PID order, no implicit row limit
+stop list --pid 1431
+stop list --name postgres --user nick
+stop list --sort mem --limit 20
+stop list --sort cpu --limit 10        # requests a CPU measurement
+stop list --cpu=500ms --json           # PID order, with measured CPU
+stop top                              # same report as bare stop
+stop top --sort mem --name node
 ```
 
-JSON envelope:
+`list`, `top`, and `sample` share `--pid`, `--name`, `--user`, `--sort`, and
+`--limit`. Filters combine with AND. Names use case-insensitive substring
+search; owners match a username or raw UID. Sorting is deterministic, with
+PID as the tie-breaker and unavailable measurements last. `list` and `sample`
+accept `cpu`, `mem`, `pid`, or `name`; `top` accepts `cpu` or `mem`.
 
-```json
-{
-  "collected_at": "2026-08-26T08:56:41+00:00",
-  "total_processes": 924,
-  "matched": 924,
-  "returned": 924,
-  "truncated": false,
-  "processes": [ ... ]
-}
-```
+`top` defaults to CPU ranking and ten rows. `list` defaults to PID order and
+all matching rows. Counts are measured before limiting: `matched` is the
+number of collected matches, `returned` is the number emitted, and `truncated`
+is true only when a limit removed rows.
 
-`truncated` is true only when a limit cut rows from `matched`.
-
-### Fast mode
-
-Accurate CPU percentages require two refreshes separated by ~200 ms, so a
-default run costs ~240 ms wall time. Pass `--fast` (on `list`, `top`, and
-`sample`) to skip the warm-up and collect in ~25 ms — but every `cpu_percent`,
-including the system summary, is reported as `null` rather than a wrong
-number, and `--sort cpu` ordering is meaningless in that mode. For `sample`,
-all points report null CPU metrics when `--fast` is used.
-
-### `stop inspect` — inspect a process or port
+### Inspect a process or port
 
 ```bash
-stop inspect 1431                  # by PID
-stop inspect ghostty               # by exact name (case-insensitive)
-stop inspect ghost                 # substring fallback
-stop inspect ghostty --json        # machine-readable record
-stop inspect --port 3000           # visible TCP listeners and UDP bindings
-stop inspect --port 3000 --json    # machine-readable ownership report
+stop inspect 1431
+stop inspect postgres                 # exact name, case-insensitive
+stop inspect --name 123               # a numeric process name, not PID 123
+stop inspect 1431 --cpu
+stop inspect --port 3000 --json
 ```
 
-Numeric targets are PIDs; otherwise the target matches names — exact match first, then substring. If several processes match, exit code 3 reports candidate identities so you can retry by PID:
+A canonical decimal positional target is a PID; other targets are exact
+names. There is no substring fallback. Search with `stop list --name ...`,
+then inspect a PID. Multiple exact matches return exit 3 with candidate
+identities on stderr. Human details quote argument boundaries; JSON preserves
+the argument array. Arguments and paths can contain secrets—take care before
+sharing an inspection report.
 
-```json
-{"code":"ambiguous","message":"3 processes match 'node'; disambiguate by PID","target":"node","candidates":[{"pid":37259,"start_time":1787722914,"name":"node","user":"nick"}]}
-```
+Port inspection reports visible TCP listeners and UDP bindings. Established
+TCP connections are excluded. Ownership is joined by PID **and native birth
+ID**, never PID alone. `visibility: "partial"`, `inaccessible_processes`, and
+`unattributed_sockets` describe known attribution gaps. Even a complete report
+is limited to the observed process/network scope; it is not proof that a port
+is universally free. Linux socket discovery uses the caller's network namespace.
+Port inspection is unsupported on other platforms.
 
-The `--port` form reports all visible TCP listeners and UDP bindings on the
-requested port. TCP connections that are not listening are excluded. Port
-ownership can be incomplete without sufficient permissions; JSON reports this
-as `visibility: "partial"`, along with inaccessible processes and
-unattributed sockets. Port 0 is not a valid query. The JSON shape is:
-
-```json
-{"port":3000,"visibility":"complete","inaccessible_processes":0,"unattributed_sockets":0,"owners":[{"process":{...},"sockets":[{"protocol":"tcp","local_address":"127.0.0.1","local_port":3000,"state":"listen"}]}]}
-```
-
-### `stop top` — system summary + ranked processes
+### Process trees
 
 ```bash
-stop top                           # system metrics header + top 10 by CPU
-stop top --sort mem --limit 25     # rank by memory
-stop top --json                    # metrics and snapshot in one document
+stop tree                             # full observed forest
+stop tree 1431                        # subtree rooted at this PID
+stop tree --name postgres --json
 ```
 
-### `stop tree` — parent/child hierarchy
+Name resolution follows `inspect`. Every collected process appears once in
+the full forest. Missing parents become roots; self-links, known later-born
+parents, and cycles cannot hide nodes. These are observed parent relationships,
+not a historical or atomic lineage record.
+
+### Finite sampling
 
 ```bash
-stop tree                           # full process forest
-stop tree 1431                      # subtree rooted at PID 1431
-stop tree ghostty                   # subtree rooted at that process (name rules like inspect)
-stop tree --json                    # nested JSON: { collected_at, total_processes, roots: [...] }
+stop sample                           # five points, 1s period, top 10 by CPU
+stop sample --pid 1431 --count 10 --interval 500ms
+stop sample --user nick --sort mem --limit 5 --rate 2 --jsonl
+stop sample --name node --count 3 --json
 ```
 
-Every collected process appears exactly once. Roots are processes whose
-parent is absent (exited or unavailable); cycles from PID reuse are broken
-at the first back-edge, with cycle members re-rooted rather than dropped.
-With a name target, ambiguity exits 3 with candidates, like `inspect`.
+`--count` accepts 1–1000. `--interval` accepts durations with `ms`, `s`, `m`,
+or `h` suffixes, from 200ms to 24h. `--rate` is an alternative in Hz, up to
+5 Hz, and cannot be combined with `--interval`.
 
-### `stop sample` — bounded time series
+Sampling primes CPU once, waits for the first measurement, then follows a
+monotonic start-to-start schedule. It waits for fresh counters and skips
+elapsed slots when collection, rendering, or output backpressure overruns the
+schedule; it never emits catch-up bursts. `skipped_intervals` counts skipped
+slots before the current point. Requested periods are not timing guarantees:
+use acquisition timestamps and `cpu_interval_ms` for actual observations.
 
-```bash
-stop sample --count 5 --interval 1s --json
-stop sample --count 10 --rate 2 --json
-stop sample --fast --count 3 --interval 250ms
-```
+`--pid` binds the first observed native identity, before other filters. A
+replacement process cannot take over the sample. `target_status` distinguishes
+`not_observed_yet`, `observed`, and `no_longer_observed`; an observed identity
+may still fail an additional name/owner filter. If a PID is visible but its
+native identity is unavailable, sampling it fails rather than binding weakly.
+Name and owner queries are reevaluated at each point, including after exec.
+Empty points are still emitted. A completed run exits 0 if any point matched,
+or 2 if none did.
 
-`sample` collects one point by default. `--count` accepts 1–1000 points.
-`--interval` is the target start-to-start period and accepts durations with
-`ms`, `s`, `m`, or `h` suffixes (default `1s`). Use `--rate` instead to request
-1–1000 samples per second; it is converted to the equivalent interval and
-cannot be combined with `--interval`. If collection overruns the period,
-the next point starts immediately; points are never overlapped or backfilled.
+Human output and `--jsonl` stream each point immediately. `--json` retains
+points and emits one final document with `requested_count`, `count`,
+`completed`, `interrupted`, and `samples`. Handled Ctrl-C exits 130 and leaves
+a valid incomplete JSON document, or the complete JSONL points already
+written. Closing a pipe consumer stops sampling successfully, including during
+long waits. Forced termination cannot guarantee valid output.
 
-JSON is one bounded report: `{ started_at, interval_ms, count, samples }`.
-Each sample contains `collected_at`, `total_processes`, flattened system
-metrics, and a `processes` array. Normal sampling warms up CPU once, then
-uses the interval between refreshes for subsequent CPU deltas.
+## CPU and availability
 
-## Process fields (P0 model)
+Inventory, inspection, trees, port lookup, and memory ranking do not measure
+CPU unless requested. `--cpu` adds a default 250ms measurement window;
+`--cpu=500ms` chooses another window (200ms–24h). The equals sign is required
+for an explicit duration. CPU sorting requests the default window automatically.
+Sampling always measures CPU over its own cadence and rejects `--cpu`.
 
-| Field | Notes |
+Process CPU is percent of **one core**, so it can exceed 100%. System CPU is
+normalized across cores. A new process, unavailable counter, or invalid
+baseline yields `null`, not a fabricated zero. Human tables omit unrequested
+CPU columns and show `n/a` for unavailable measurements. Memory columns use
+RSS and explicit binary units such as MiB; JSON uses raw bytes.
+
+Unavailable scalar facts are `null`. The sparse `unavailable` map explains
+missing fields with `not_requested`, `missing_baseline`, `unknown`, or
+`unsupported`. Inventory does not request command lines, executable paths,
+working directories, thread counts, or cumulative I/O; `inspect` requests them.
+An empty `cmdline` is explained in the same map. The backend cannot distinguish
+some unreadable zero counters from real zero: ambiguous zero memory/I/O facts
+and zero start timestamps are reported as unknown. Thread counts are currently
+unsupported on macOS. Human output escapes terminal controls in process text;
+`NO_COLOR` disables color, which is otherwise terminal-only.
+
+## JSON contract
+
+All machine formats are explicit; piping does not change the format. `--pretty`
+implies `--json`. `--jsonl` is available only for `sample`. Reports use
+`schema_version: 1` (also on each sample point), snake_case keys, and additive
+availability metadata. This schema version is independent of the crate version.
+
+Collection metadata includes:
+
+- `collection_started_at`, `collected_at`, `collection_duration_ms`: the
+  acquisition window, not an atomic snapshot.
+- `cpu_interval_ms`: the actual system CPU baseline interval, or `null` when
+  CPU was not measured. Per-process deltas span the corresponding process reads.
+- `scope_id`: an opaque boot/PID-numbering scope, or `null` if unavailable.
+- `scope_pid`: a PID-scoped collection, or `null` for the visible inventory.
+- `inaccessible_processes`: observed candidates with limited basic facts or
+  lost during enrichment. It cannot count processes hidden from enumeration.
+
+Process correlation requires **`scope_id` + `pid` + `birth_id`**. Birth IDs are
+opaque native tokens, not timestamps. `start_time` is a human Unix-seconds
+field, not a reuse-safe identity. If scope or birth ID is unavailable, do not
+infer identity continuity across invocations.
+
+Report shapes (metadata omitted here):
+
+| Command | Payload |
 |---|---|
-| `pid`, `start_time` | Together they form process identity; `start_time` (unix seconds) guards against PID reuse |
-| `ppid` | Parent PID, `null` when unavailable or parent exited |
-| `name`, `exe`, `cmdline`, `cwd` | Location facts; unavailable values are `null` |
-| `state` | One of `idle`, `run`, `sleep`, `stop`, `zombie`, `tracing`, `dead`, `wakekill`, `waking`, `parked`, `lock_blocked`, `disk_sleep`, `unknown` |
-| `user`, `uid` | Resolved username and raw ID |
-| `cpu_percent` | Total across cores, can exceed 100; **null under `--fast`** |
-| `rss_bytes`, `virtual_bytes` | Raw byte counts |
-| `threads` | Thread count (`null` on macOS) |
-| `io_read_bytes`, `io_written_bytes` | Cumulative totals |
+| `list` | `total_processes`, `matched`, `returned`, `truncated`, `processes` |
+| `top` / bare `stop` | List payload plus system CPU and memory metrics |
+| `inspect <target>` | `target`, `process` (object or `null`) |
+| `tree` | `total_processes`, `roots` (nodes with `process` and `children`) |
+| `inspect --port` | `port`, `visibility`, `inaccessible_processes`, `unattributed_sockets`, `owners` |
+| `sample --json` | `started_at`, `interval_ms`, `requested_count`, `count`, `completed`, `interrupted`, `samples` |
+| `sample --jsonl` | One self-contained point per line: index/count/period, skipped slots, collection metadata, list payload, system metrics, optional target status |
 
-## Exit codes
+`total_processes` counts the visible inventory within the requested PID scope,
+before query filtering; a full tree counts successfully collected nodes.
+Port reports include `scope_id`, process acquisition metadata in
+`process_collection`, and separate `scan_started_at`, `scanned_at`, and
+`scan_duration_ms` fields. Each owner has `process` and `sockets`; socket
+records contain `protocol`, `local_address`, `local_port`, and `state`.
 
-| Code | Meaning |
+Successful and empty reports go to stdout. Ambiguity, usage, and operational
+errors go to stderr, as JSON when a machine format was selected. An empty
+result means **no match observed**, not universal absence.
+
+| Exit | Meaning |
 |---|---|
-| 0 | Success, at least one process returned |
-| 1 | Operational error |
-| 2 | No match |
-| 3 | Target ambiguous for `inspect`/`tree` (candidates in error payload) |
+| 0 | Success (or a consumer closed the output pipe) |
+| 1 | Usage or operational error |
+| 2 | No match observed |
+| 3 | Ambiguous `inspect`/`tree` target; candidates reported |
+| 130 | Handled interruption |
 
-Enables shell checks like `stop inspect nginx && echo running`.
+### Changes from the earlier 0.1.0 interface
 
-## Design goals
-
-1. **AI-first** — JSON primary, humans secondary
-2. **Cross-platform** — same contracts on macOS and Linux
-3. **Honest metadata** — truncation and availability are explicit, never silent
-4. **Small surface** — few commands, well-defined semantics
+This unreleased redesign keeps the package version but changes CLI and JSON
+contracts. `--fast` is removed: immediate queries are the default, with
+explicit CPU measurement when needed. Bare `stop` now means `top`; `list`
+defaults to PID order; `sample` defaults to five limited points and supports
+filters/JSONL. Inspect/tree names no longer broaden to substrings. `--pretty`
+now selects JSON itself. Inspection returns an envelope rather than a bare
+process object; no-match reports go to stdout. Nullable resource fields,
+native identity/scope, timing, and sample completion metadata replace the old
+second-resolution identity and implicit CPU assumptions. Update scripts against
+the contract above rather than treating this as a presentation-only change.
 
 ## Development
 
-Requires Rust ≥ 1.95 (`rust-version` is declared, driven by sysinfo 0.39).
-
 ```bash
-cargo test      # unit + integration suite
-cargo clippy    # zero-warning policy
-cargo fmt
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
 cargo build --release
 ```
 
-Collection includes a mandatory ~200 ms warm-up so CPU percentages reflect real deltas.
-
-## Known limitations
-
-- **Threads**: not reported on macOS (sysinfo limitation); `null`
-- **Disk I/O**: often zero on macOS for idle processes
-- **Windows**: untested; port ownership is currently unsupported
-- Port ownership is implemented on Linux and macOS; permissions can make
-  attribution partial
-- Per-process network metrics: not available via sysinfo
-
-## Roadmap
-
-Planned next on this architecture: snapshots + diff, and wait-for-process.
+`Cargo.lock` is intentionally ignored; CI resolves dependencies freshly on
+Linux and macOS. `bench.sh` compares the current command collection modes
+using an already installed `hyperfine`.
 
 ## License
 
