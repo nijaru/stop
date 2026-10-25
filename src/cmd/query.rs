@@ -45,12 +45,18 @@ pub fn run(
                     snapshot: &snapshot,
                 },
                 output_args.pretty,
+                cancel,
             )?;
         } else {
-            output::print_json(&snapshot, output_args.pretty)?;
+            output::print_json(&snapshot, output_args.pretty, cancel)?;
         }
     } else {
-        output::print_snapshot(&snapshot, top.then_some(&data.system), window.is_some())?;
+        output::print_snapshot(
+            &snapshot,
+            top.then_some(&data.system),
+            window.is_some(),
+            cancel,
+        )?;
     }
     Ok(if snapshot.returned == 0 {
         Outcome::NoMatch

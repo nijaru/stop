@@ -157,8 +157,7 @@ impl Sampler {
                 .with_exe(UpdateKind::Always)
                 .with_cmd(UpdateKind::Always)
                 .with_cwd(UpdateKind::Always)
-                .with_disk_usage()
-                .with_tasks();
+                .with_disk_usage();
         }
         // Start fresh again so *all* emitted facts fall inside the native birth checks.
         let mut selected_sys = System::new();
@@ -174,6 +173,7 @@ impl Sampler {
                 inaccessible_processes += 1;
                 continue;
             };
+            let threads = self.request.details.then(|| thread_count(id)).flatten();
             let birth_id = identity::birth_id(id);
             if births.get(&id) != Some(&birth_id) {
                 inaccessible_processes += 1;
@@ -268,11 +268,6 @@ impl Sampler {
                     .collect()
             } else {
                 vec![]
-            };
-            let threads = if self.request.details {
-                p.tasks().and_then(|t| u32::try_from(t.len()).ok())
-            } else {
-                None
             };
             let io = p.disk_usage();
             // sysinfo does not expose read failure separately from zero counters.
@@ -377,6 +372,21 @@ fn nonzero(value: u64) -> Option<u64> {
     (value != 0).then_some(value)
 }
 
+// sysinfo's task set excludes the main thread and hides directory-read failures.
+// Read the kernel's total instead, inside the same native identity checks.
+#[cfg(target_os = "linux")]
+fn thread_count(pid: u32) -> Option<u32> {
+    std::fs::read_to_string(format!("/proc/{pid}/status"))
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("Threads:")?.trim().parse::<u32>().ok())
+        .filter(|&count| count > 0)
+}
+#[cfg(not(target_os = "linux"))]
+fn thread_count(_pid: u32) -> Option<u32> {
+    None
+}
+
 fn cpu_delta(previous: &Baseline, birth: &str, counter: u64, at: Instant) -> Option<f32> {
     let elapsed = at.duration_since(previous.at);
     if previous.birth_id != birth || elapsed < sysinfo::MINIMUM_CPU_UPDATE_INTERVAL {
@@ -440,6 +450,7 @@ mod tests {
         };
         let later = at + Duration::from_secs(1);
         assert_eq!(cpu_delta(&baseline, "one", 1250, later), Some(25.0));
+        assert_eq!(cpu_delta(&baseline, "one", 3000, later), Some(200.0));
         assert_eq!(cpu_delta(&baseline, "two", 1250, later), None);
         assert_eq!(cpu_delta(&baseline, "one", 999, later), None);
         assert_eq!(cpu_delta(&baseline, "one", 1250, at), None);

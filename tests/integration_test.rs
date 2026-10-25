@@ -292,8 +292,9 @@ fn top_json_has_system_metrics() {
     ] {
         assert!(v.get(key).is_some(), "top JSON missing '{key}'");
     }
-    let limit = v["returned"].as_u64().unwrap();
-    assert_eq!(limit, 10.min(v["total_processes"].as_u64().unwrap()));
+    let returned = v["returned"].as_u64().unwrap();
+    // PIDs may disappear between inventory and enrichment; limit collected matches.
+    assert_eq!(returned, 10.min(v["matched"].as_u64().unwrap()));
     assert_eq!(
         v["truncated"].as_bool().unwrap(),
         v["matched"].as_u64().unwrap() > v["returned"].as_u64().unwrap()

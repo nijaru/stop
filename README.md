@@ -111,10 +111,17 @@ or 2 if none did.
 
 Human output and `--jsonl` stream each point immediately. `--json` retains
 points and emits one final document with `requested_count`, `count`,
-`completed`, `interrupted`, and `samples`. Handled Ctrl-C exits 130 and leaves
-a valid incomplete JSON document, or the complete JSONL points already
-written. Closing a pipe consumer stops sampling successfully, including during
-long waits. Forced termination cannot guarantee valid output.
+`completed`, `interrupted`, and `samples`. These flags describe collection,
+before final JSON delivery; interrupting delivery can exit 130 even if
+collection had already completed.
+
+Handled Ctrl-C exits 130. With a responsive consumer, interruption during
+collection leaves a valid incomplete JSON document or complete JSONL points.
+If a pipe consumer stops reading, stop allows a short flush grace period,
+then exits even if the current record or document is unfinished; earlier
+complete JSONL records remain valid. Closing a pipe consumer stops sampling
+successfully, including during long waits. Forced termination cannot guarantee
+valid output.
 
 ## CPU and availability
 

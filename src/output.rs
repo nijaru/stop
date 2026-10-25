@@ -11,11 +11,18 @@ use crate::model::{
     CollectionMetadata, ProcessInfo, SamplePoint, Snapshot, SystemMetrics, format_bytes_parts,
 };
 use crate::ports::{PortReport, Visibility};
+use crate::runtime::Cancellation;
 
-pub fn print_json<T: Serialize>(value: &T, pretty: bool) -> io::Result<()> {
-    let mut out = io::stdout().lock();
-    json_to(&mut out, value, pretty)?;
-    out.flush()
+mod writer;
+
+pub fn print_json<T: Serialize>(
+    value: &T,
+    pretty: bool,
+    cancel: &Cancellation,
+) -> Result<(), StopError> {
+    let mut encoded = Vec::new();
+    json_to(&mut encoded, value, pretty)?;
+    writer::write(&encoded, cancel, writer::Destination::Stdout)
 }
 fn json_to<T: Serialize>(out: &mut impl Write, value: &T, pretty: bool) -> io::Result<()> {
     let result = if pretty {
@@ -31,10 +38,8 @@ fn json_to<T: Serialize>(out: &mut impl Write, value: &T, pretty: bool) -> io::R
     })?;
     writeln!(out)
 }
-fn write_stdout(value: &str) -> io::Result<()> {
-    let mut out = io::stdout().lock();
-    out.write_all(value.as_bytes())?;
-    out.flush()
+fn write_stdout(value: &str, cancel: &Cancellation) -> Result<(), StopError> {
+    writer::write(value.as_bytes(), cancel, writer::Destination::Stdout)
 }
 fn use_color() -> bool {
     io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
@@ -167,7 +172,8 @@ pub fn print_snapshot(
     snapshot: &Snapshot,
     system: Option<&SystemMetrics>,
     cpu: bool,
-) -> io::Result<()> {
+    cancel: &Cancellation,
+) -> Result<(), StopError> {
     let mut out = String::new();
     if let Some(system) = system {
         out.push_str(&system_header(system, cpu));
@@ -188,7 +194,7 @@ pub fn print_snapshot(
         ));
     }
     append_visibility(&mut out, &snapshot.collection);
-    write_stdout(&out)
+    write_stdout(&out, cancel)
 }
 fn append_visibility(out: &mut String, metadata: &CollectionMetadata) {
     if metadata.inaccessible_processes > 0 {
@@ -196,36 +202,49 @@ fn append_visibility(out: &mut String, metadata: &CollectionMetadata) {
     }
 }
 
-pub fn print_sample_point(point: &SamplePoint) -> io::Result<()> {
-    write_stdout(&format!(
-        "SAMPLE {}/{}  {}\n",
-        point.index, point.requested_count, point.snapshot.collection.collected_at
-    ))?;
-    print_snapshot(&point.snapshot, Some(&point.system), true)?;
+pub fn print_sample_point(point: &SamplePoint, cancel: &Cancellation) -> Result<(), StopError> {
+    write_stdout(
+        &format!(
+            "SAMPLE {}/{}  {}\n",
+            point.index, point.requested_count, point.snapshot.collection.collected_at
+        ),
+        cancel,
+    )?;
+    print_snapshot(&point.snapshot, Some(&point.system), true, cancel)?;
     if point.skipped_intervals > 0 {
-        write_stdout(&format!(
-            "Skipped {} elapsed schedule slots.\n",
-            point.skipped_intervals
-        ))?;
+        write_stdout(
+            &format!(
+                "Skipped {} elapsed schedule slots.\n",
+                point.skipped_intervals
+            ),
+            cancel,
+        )?;
     }
     if point.target_status.as_deref() == Some("no_longer_observed") {
-        write_stdout("The selected process identity is no longer observed.\n")?;
+        write_stdout(
+            "The selected process identity is no longer observed.\n",
+            cancel,
+        )?;
     }
-    write_stdout("\n")
+    write_stdout("\n", cancel)
 }
 
-pub fn print_no_match(target: &str) -> io::Result<()> {
-    write_stdout(&format!(
-        "No visible process matching {}. Search names with stop list --name <name>.\n",
-        safe(&format!("{target:?}"))
-    ))
+pub fn print_no_match(target: &str, cancel: &Cancellation) -> Result<(), StopError> {
+    write_stdout(
+        &format!(
+            "No visible process matching {}. Search names with stop list --name <name>.\n",
+            safe(&format!("{target:?}"))
+        ),
+        cancel,
+    )
 }
 
 pub fn print_process_detail(
     p: &ProcessInfo,
     metadata: &CollectionMetadata,
     cpu: bool,
-) -> io::Result<()> {
+    cancel: &Cancellation,
+) -> Result<(), StopError> {
     let mut out = format!(
         "{} · PID {}\nOwner {} · State {}\n\n",
         safe(&p.name),
@@ -336,7 +355,7 @@ pub fn print_process_detail(
         out.push_str(&format!("CPU measured over {ms} ms\n"));
     }
     append_visibility(&mut out, metadata);
-    write_stdout(&out)
+    write_stdout(&out, cancel)
 }
 
 pub fn system_header(metrics: &SystemMetrics, cpu: bool) -> String {
@@ -358,8 +377,12 @@ pub fn system_header(metrics: &SystemMetrics, cpu: bool) -> String {
     }
 }
 
-pub fn print_process_tree(roots: &[TreeNode], cpu: bool) -> io::Result<()> {
-    write_stdout(&render_process_tree(roots, cpu))
+pub fn print_process_tree(
+    roots: &[TreeNode],
+    cpu: bool,
+    cancel: &Cancellation,
+) -> Result<(), StopError> {
+    write_stdout(&render_process_tree(roots, cpu), cancel)
 }
 pub fn render_process_tree(roots: &[TreeNode], cpu: bool) -> String {
     fn label(node: &TreeNode, cpu: bool) -> String {
@@ -407,7 +430,8 @@ pub fn print_port_report(
     report: &PortReport,
     metadata: &CollectionMetadata,
     cpu: bool,
-) -> io::Result<()> {
+    cancel: &Cancellation,
+) -> Result<(), StopError> {
     let partial = report.visibility == Visibility::Partial;
     let mut out = format!(
         "PORT {} · Visibility {}\n",
@@ -466,34 +490,49 @@ pub fn print_port_report(
     if partial {
         out.push_str(&format!("{} inaccessible processes; {} unattributed sockets. This does not establish that the port is free.\n",report.inaccessible_processes,report.unattributed_sockets));
     }
-    write_stdout(&out)
+    write_stdout(&out, cancel)
 }
 
-pub fn report_error(err: &StopError, machine: bool) -> io::Result<()> {
-    let mut out = io::stderr().lock();
+pub fn print_help(help: &clap::Error, cancel: &Cancellation) -> Result<(), StopError> {
+    let help = help.render();
+    let text = if use_color() {
+        help.ansi().to_string()
+    } else {
+        help.to_string()
+    };
+    write_stdout(&text, cancel)
+}
+
+pub fn report_error(
+    err: &StopError,
+    machine: bool,
+    cancel: Option<&Cancellation>,
+) -> Result<(), StopError> {
+    let mut out = Vec::new();
     if machine {
         if let StopError::Resolve(err) = err {
-            return json_to(&mut out, err, false);
+            json_to(&mut out, err, false)?;
+        } else {
+            #[derive(Serialize)]
+            struct ErrorPayload<'a> {
+                code: &'a str,
+                message: String,
+            }
+            let code = match err {
+                StopError::InvalidRequest(_) => "usage",
+                StopError::Interrupted => "interrupted",
+                StopError::UnsupportedPlatform => "unsupported_platform",
+                _ => "operational",
+            };
+            json_to(
+                &mut out,
+                &ErrorPayload {
+                    code,
+                    message: err.to_string(),
+                },
+                false,
+            )?;
         }
-        #[derive(Serialize)]
-        struct ErrorPayload<'a> {
-            code: &'a str,
-            message: String,
-        }
-        let code = match err {
-            StopError::InvalidRequest(_) => "usage",
-            StopError::Interrupted => "interrupted",
-            StopError::UnsupportedPlatform => "unsupported_platform",
-            _ => "operational",
-        };
-        json_to(
-            &mut out,
-            &ErrorPayload {
-                code,
-                message: err.to_string(),
-            },
-            false,
-        )
     } else {
         writeln!(out, "stop: {}", safe(&err.to_string()))?;
         if let StopError::Resolve(err) = err {
@@ -511,6 +550,13 @@ pub fn report_error(err: &StopError, machine: bool) -> io::Result<()> {
                 )?;
             }
         }
+    }
+    if let Some(cancel) = cancel {
+        writer::write(&out, cancel, writer::Destination::Stderr)
+    } else {
+        // Handler installation failed. Leave descriptor flags alone: the
+        // default signal action must remain able to terminate a blocked write.
+        io::stderr().lock().write_all(&out)?;
         Ok(())
     }
 }

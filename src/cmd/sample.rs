@@ -145,9 +145,9 @@ pub fn run(
             system: data.system,
         };
         if output_args.jsonl {
-            output::print_json(&point, false)?;
+            output::print_json(&point, false, cancel)?;
         } else if !output_args.document() {
-            output::print_sample_point(&point)?;
+            output::print_sample_point(&point, cancel)?;
         }
         if output_args.document() {
             samples.push(point);
@@ -158,6 +158,8 @@ pub fn run(
             skipped_intervals = schedule.advance(Instant::now());
         }
     }
+    // These flags describe collection, before final delivery. A later signal
+    // cannot retroactively change metadata already sent to a consumer.
     let interrupted = cancel.interrupted();
     if output_args.document() {
         output::print_json(
@@ -172,6 +174,7 @@ pub fn run(
                 samples,
             },
             output_args.pretty,
+            cancel,
         )?;
     }
     if let Some(err) = failure {

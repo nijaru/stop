@@ -60,9 +60,9 @@ pub fn run(
             report: &report,
         };
         if output_args.document() {
-            output::print_json(&envelope, output_args.pretty)?;
+            output::print_json(&envelope, output_args.pretty, cancel)?;
         } else {
-            output::print_port_report(&report, &data.metadata, window.is_some())?;
+            output::print_port_report(&report, &data.metadata, window.is_some(), cancel)?;
         }
         return Ok(if report.owners.is_empty() {
             Outcome::NoMatch
@@ -102,11 +102,12 @@ pub fn run(
                 process,
             },
             output_args.pretty,
+            cancel,
         )?;
     } else if let Some(process) = process {
-        output::print_process_detail(process, &data.metadata, window.is_some())?;
+        output::print_process_detail(process, &data.metadata, window.is_some(), cancel)?;
     } else {
-        output::print_no_match(target)?;
+        output::print_no_match(target, cancel)?;
     }
     Ok(if process.is_some() {
         Outcome::Success

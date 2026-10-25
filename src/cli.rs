@@ -58,9 +58,6 @@ impl OutputArgs {
     pub fn document(&self) -> bool {
         self.json || self.pretty
     }
-    pub fn machine(&self) -> bool {
-        self.document() || self.jsonl
-    }
 }
 
 #[derive(Args, Debug, Default)]
