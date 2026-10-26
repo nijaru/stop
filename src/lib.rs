@@ -8,6 +8,8 @@ pub mod identity;
 pub mod model;
 pub mod output;
 pub mod ports;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod process_args;
 pub mod runtime;
 
 pub use cli::{Cli, Command};

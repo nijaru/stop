@@ -217,6 +217,39 @@ fn sigint_stops_a_blocked_writer_and_restores_shared_stdout_flags() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn inspect_preserves_empty_and_whitespace_arguments() {
+    let program = "/bin//sh";
+    let args = [
+        "-c",
+        "read line",
+        "stop-argv-check",
+        "two words",
+        "",
+        " \t padded \n ",
+        "Unicode-λ",
+        "",
+    ];
+    let child = OwnedChild(
+        Command::new(program)
+            .args(args)
+            .env_clear()
+            .env("STOP_ARGS_ENV", "not_an_argument")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_stop"))
+        .args(["inspect", &child.0.id().to_string(), "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let expected: Vec<_> = std::iter::once(program).chain(args).collect();
+    assert_eq!(report["process"]["cmdline"], serde_json::json!(expected));
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn inspect_thread_count_includes_the_main_thread() {

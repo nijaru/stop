@@ -7,6 +7,12 @@ pub fn birth_id(pid: u32) -> Option<String> {
     platform::birth_id(pid)
 }
 
+/// The BSD record also supplies the target ABI needed to decode macOS argv.
+#[cfg(target_os = "macos")]
+pub(crate) fn bsd_info(pid: u32) -> Option<libc::proc_bsdinfo> {
+    platform::bsd_info(pid)
+}
+
 /// Identify the boot and PID-numbering scope used by native process reads.
 /// Failure to establish that scope is explicit rather than machine-global trust.
 pub fn scope_id() -> Option<String> {
@@ -94,6 +100,14 @@ mod platform {
     use std::ptr;
 
     pub(super) fn birth_id(pid: u32) -> Option<String> {
+        let info = bsd_info(pid)?;
+        Some(format!(
+            "macos:{}:{:06}",
+            info.pbi_start_tvsec, info.pbi_start_tvusec
+        ))
+    }
+
+    pub(super) fn bsd_info(pid: u32) -> Option<libc::proc_bsdinfo> {
         let native_pid = libc::pid_t::try_from(pid).ok()?;
         if native_pid <= 0 {
             return None;
@@ -120,10 +134,7 @@ mod platform {
         if info.pbi_pid != pid || info.pbi_start_tvusec >= 1_000_000 {
             return None;
         }
-        Some(format!(
-            "macos:{}:{:06}",
-            info.pbi_start_tvsec, info.pbi_start_tvusec
-        ))
+        Some(info)
     }
 
     pub(super) fn scope_id() -> Option<String> {

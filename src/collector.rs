@@ -155,9 +155,12 @@ impl Sampler {
         if self.request.details {
             kind = kind
                 .with_exe(UpdateKind::Always)
-                .with_cmd(UpdateKind::Always)
                 .with_cwd(UpdateKind::Always)
                 .with_disk_usage();
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            {
+                kind = kind.with_cmd(UpdateKind::Always);
+            }
         }
         // Start fresh again so *all* emitted facts fall inside the native birth checks.
         let mut selected_sys = System::new();
@@ -174,6 +177,11 @@ impl Sampler {
                 continue;
             };
             let threads = self.request.details.then(|| thread_count(id)).flatten();
+            let cmdline = if self.request.details {
+                command_line(p)
+            } else {
+                Vec::new()
+            };
             let birth_id = identity::birth_id(id);
             if births.get(&id) != Some(&birth_id) {
                 inaccessible_processes += 1;
@@ -261,14 +269,6 @@ impl Sampler {
                 .details
                 .then(|| p.cwd().map(|p| p.to_string_lossy().into_owned()))
                 .flatten();
-            let cmdline: Vec<String> = if self.request.details {
-                p.cmd()
-                    .iter()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .collect()
-            } else {
-                vec![]
-            };
             let io = p.disk_usage();
             // sysinfo does not expose read failure separately from zero counters.
             let io_read_bytes =
@@ -370,6 +370,21 @@ impl Sampler {
 // The backend cannot distinguish inaccessible scalar counters from zero.
 fn nonzero(value: u64) -> Option<u64> {
     (value != 0).then_some(value)
+}
+
+fn command_line(process: &sysinfo::Process) -> Vec<String> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        crate::process_args::read(process.pid().as_u32())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        process
+            .cmd()
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect()
+    }
 }
 
 // sysinfo's task set excludes the main thread and hides directory-read failures.
