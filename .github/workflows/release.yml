@@ -11,6 +11,7 @@ on:
 permissions:
   contents: write
   actions: read
+  id-token: write
 
 concurrency:
   group: release
@@ -88,9 +89,15 @@ jobs:
       - name: Publish dry run
         run: cargo publish --locked --dry-run
 
+      # Matches the crates.io trusted publisher: nijaru/stop, release.yml,
+      # with no environment. Request the short-lived token only after checks.
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
       - name: Publish to crates.io
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish --locked
 
       - name: Tag and create GitHub release
