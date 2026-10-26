@@ -85,6 +85,9 @@ jobs:
       - name: Verify package and installation
         run: bash scripts/check-package.sh
 
+      - name: Publish dry run
+        run: cargo publish --locked --dry-run
+
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

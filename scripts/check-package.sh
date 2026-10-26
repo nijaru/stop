@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 python3 --version >/dev/null
 
-cargo publish --locked --dry-run
+cargo package --locked
 archive=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c '
 import json, pathlib, sys
 metadata = json.load(sys.stdin)

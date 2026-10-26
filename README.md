@@ -254,8 +254,8 @@ To verify the published package from a clean working tree:
 bash scripts/check-package.sh
 ```
 
-This check needs Python 3. It dry-runs publication, installs the archived
-crate into a temporary prefix, and exercises that installed binary. It does
+This check needs Python 3. It builds and verifies the crate archive, installs
+it into a temporary prefix, and exercises that installed binary. It does
 not publish anything or replace your installed `stop`.
 
 Development tracks stable Rust through `rust-toolchain.toml`. CI tests both
