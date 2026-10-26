@@ -66,3 +66,7 @@ jobs:
 
       - name: Build release
         run: cargo build --locked --release --verbose
+
+      - name: Verify package and installation
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        run: bash scripts/check-package.sh

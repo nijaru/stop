@@ -4,17 +4,37 @@ Inspect processes without leaving the shell. **stop** prints one-shot reports
 and finite samples—not a full-screen monitor. Human-readable output is the
 default; use `--json` for scripts or `--jsonl` for streaming samples.
 
+Supported and tested on Linux and macOS. Despite its name, stop does not
+terminate processes. There is no daemon, automatic pager, or unbounded watch
+mode.
+
+## Install
+
+With Rust 1.95 or newer:
+
 ```bash
-cargo install --path .                 # Rust 1.95 or newer
+cargo install stop-cli --locked
+stop --version
+```
+
+The crate is named `stop-cli`; the installed command is `stop`. To build the
+latest source instead:
+
+```bash
+git clone https://github.com/nijaru/stop.git
+cd stop
+cargo install --path .
+```
+
+## Quick start
+
+```bash
 stop                                  # system summary + top 10 by CPU
 stop list --name postgres              # immediate process inventory
 stop inspect 1431                      # identity, arguments, paths and resources
 stop top --sort mem --limit 20         # rank by RSS, without a CPU warm-up
 stop sample --name node --count 5      # five filtered reports as they arrive
 ```
-
-Supported and tested on Linux and macOS. There is no daemon, automatic pager,
-or unbounded watch mode. Despite its name, stop does not terminate processes.
 
 ## Commands
 
@@ -201,18 +221,23 @@ result means **no match observed**, not universal absence.
 | 3 | Ambiguous `inspect`/`tree` target; candidates reported |
 | 130 | Handled interruption |
 
-### Changes from the earlier 0.1.0 interface
+## Upgrading from 0.0.x
 
-This unreleased redesign keeps the package version but changes CLI and JSON
-contracts. `--fast` is removed: immediate queries are the default, with
-explicit CPU measurement when needed. Bare `stop` now means `top`; `list`
-defaults to PID order; `sample` defaults to five limited points and supports
-filters/JSONL. Inspect/tree names no longer broaden to substrings. `--pretty`
-now selects JSON itself. Inspection returns an envelope rather than a bare
-process object; no-match reports go to stdout. Nullable resource fields,
-native identity/scope, timing, and sample completion metadata replace the old
-second-resolution identity and implicit CPU assumptions. Update scripts against
-the contract above rather than treating this as a presentation-only change.
+0.1.0 changes the CLI and JSON contracts. Update scripts rather than treating
+this as a presentation-only upgrade:
+
+- Replace `--watch` with finite `sample --count N --interval 1s`. Use `--jsonl`
+  for streaming output; there is no unbounded watch mode.
+- Replace `--sort-by mem --top-n 5` with `top --sort mem --limit 5`.
+- Replace name, user, and PID `--filter` expressions with explicit selectors
+  on `list`, `top`, or `sample`. For numeric predicates, filter JSON with a
+  tool such as `jq`. CSV output is no longer supported.
+- Bare `stop` now shows a system summary and the top ten processes by CPU.
+  Use `list` for immediate PID-ordered inventory without a CPU warm-up.
+- Inspect/tree names resolve exactly; use `list --name` for substring search.
+- Machine reports use the envelopes, nullable facts, native identity, timing,
+  and exit codes documented above. `--pretty` selects JSON on its own, and
+  empty results go to stdout with exit 2.
 
 ## Development
 
@@ -223,11 +248,22 @@ cargo fmt --check
 cargo build --release
 ```
 
+To verify the published package from a clean working tree:
+
+```bash
+bash scripts/check-package.sh
+```
+
+This check needs Python 3. It dry-runs publication, installs the archived
+crate into a temporary prefix, and exercises that installed binary. It does
+not publish anything or replace your installed `stop`.
+
 Development tracks stable Rust through `rust-toolchain.toml`. CI tests both
 stable and the Rust 1.95 minimum on Linux and macOS. `Cargo.lock` is
 intentionally ignored; each CI job resolves dependencies freshly, then uses
-that graph consistently for its checks. `bench.sh` compares the current
-command collection modes using an already installed `hyperfine`.
+that graph consistently for its checks. Published crates include a generated
+lockfile; `cargo install --locked` uses that release's dependency graph.
+`bench.sh` compares collection modes using an already installed `hyperfine`.
 
 ## License
 
