@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use sysinfo::{
     MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System,
-    UpdateKind, Users,
+    UpdateKind,
 };
 
 use crate::cli::QueryArgs;
@@ -14,6 +14,9 @@ use crate::error::StopError;
 use crate::identity;
 use crate::model::{CollectionMetadata, ProcessIdentity, ProcessInfo, SystemMetrics};
 use crate::runtime::Cancellation;
+
+mod users;
+use users::UserNames;
 
 #[derive(Default)]
 pub struct Request {
@@ -61,7 +64,7 @@ struct Baseline {
 pub struct Sampler {
     sys: System,
     request: Request,
-    users: HashMap<String, String>,
+    users: UserNames,
     baselines: HashMap<u32, Baseline>,
     system_baseline: Option<Instant>,
     scope_id: Option<String>,
@@ -69,15 +72,10 @@ pub struct Sampler {
 
 impl Sampler {
     pub fn new(request: Request) -> Self {
-        // Resolve account names once per finite command, never once per process.
-        let users = Users::new_with_refreshed_list()
-            .iter()
-            .map(|u| (u.id().to_string(), u.name().into()))
-            .collect();
         Self {
             sys: System::new(),
             request,
-            users,
+            users: UserNames::new(),
             baselines: HashMap::new(),
             system_baseline: None,
             scope_id: identity::scope_id(),
@@ -139,7 +137,8 @@ impl Sampler {
                         .is_none_or(|n| name.to_lowercase().contains(&n.to_lowercase()))
                         && self.request.user.as_ref().is_none_or(|u| {
                             uid.as_ref() == Some(u)
-                                || uid.as_ref().and_then(|id| self.users.get(id)) == Some(u)
+                                || p.user_id().and_then(|id| self.users.name(id))
+                                    == Some(u.as_str())
                         }))
             })
             .map(|(pid, _)| *pid)
@@ -258,7 +257,10 @@ impl Sampler {
                 );
             }
             let uid = p.user_id().map(|u| u.to_string());
-            let user = uid.as_ref().and_then(|id| self.users.get(id).cloned());
+            let user = p
+                .user_id()
+                .and_then(|id| self.users.name(id))
+                .map(str::to_owned);
             let exe = self
                 .request
                 .details
