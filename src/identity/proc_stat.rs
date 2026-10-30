@@ -96,6 +96,29 @@ mod tests {
     }
 
     #[test]
+    fn read_error_after_valid_prefix_yields_no_birth() {
+        struct Fails;
+        impl Read for Fails {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::other("injected read failure"))
+            }
+        }
+        let record = b"123 (comm) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654321";
+        for length in [record.len(), 4096] {
+            let mut bytes = record.to_vec();
+            bytes.resize(length, b' ');
+            assert_eq!(
+                read_record(bytes.as_slice(), |s| s.number::<u64>(22)),
+                Some(987654321)
+            );
+            assert_eq!(
+                read_record(bytes.as_slice().chain(Fails), |s| s.number::<u64>(22)),
+                None
+            );
+        }
+    }
+
+    #[test]
     fn rejects_truncated_or_invalid_start_ticks() {
         for stat in [
             b"123 (missing delimiter S 1".as_slice(),
