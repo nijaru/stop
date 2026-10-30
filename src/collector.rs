@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use sysinfo::{MemoryRefreshKind, Pid, ProcessStatus, System};
+use sysinfo::{MemoryRefreshKind, ProcessStatus, System};
 
 use crate::cli::QueryArgs;
 use crate::error::StopError;
@@ -26,6 +26,16 @@ pub struct Request {
 }
 
 impl Request {
+    fn matches(&self, name: &str, uid: Option<&str>, user: Option<&str>) -> bool {
+        self.name
+            .as_ref()
+            .is_none_or(|needle| name.to_lowercase().contains(&needle.to_lowercase()))
+            && self
+                .user
+                .as_ref()
+                .is_none_or(|needle| uid == Some(needle.as_str()) || user == Some(needle.as_str()))
+    }
+
     pub fn query(query: &QueryArgs, cpu: bool) -> Self {
         Self {
             pid: query.pid,
@@ -108,34 +118,17 @@ impl Sampler {
         };
 
         let acquire::Acquisition {
-            system: selected_sys,
-            selected,
-            births,
+            records,
             total_processes,
+            mut inaccessible_processes,
         } = acquire::acquire(&self.request, &mut self.users)?;
-        let measured_at = Instant::now();
         let mut next_baselines = HashMap::new();
-        let mut processes = Vec::with_capacity(selected.len());
-        let mut inaccessible_processes = 0;
+        let mut processes = Vec::with_capacity(records.len());
         let mut target = TargetObservation::NotObserved;
-        for pid in selected {
-            let id = pid.as_u32();
-            let Some(p) = selected_sys.process(pid) else {
-                // An absent requested PID is not an observed candidate unless
-                // the native before-read actually found it.
-                if self.request.pid != Some(id) || births.get(&id).is_some_and(Option::is_some) {
-                    inaccessible_processes += 1;
-                }
-                continue;
-            };
-            let threads = self.request.details.then(|| thread_count(id)).flatten();
-            let cmdline = if self.request.details {
-                command_line(p)
-            } else {
-                Vec::new()
-            };
-            let birth_id = identity::birth_id(id);
-            if births.get(&id) != Some(&birth_id) {
+        for p in records {
+            let id = p.pid;
+            let birth_id = p.birth_after;
+            if p.birth_before != birth_id {
                 inaccessible_processes += 1;
                 continue;
             }
@@ -148,9 +141,9 @@ impl Sampler {
                     None => TargetObservation::Unavailable,
                 };
             }
-            let start_time = nonzero(p.start_time());
-            let rss_bytes = nonzero(p.memory());
-            let virtual_bytes = nonzero(p.virtual_memory());
+            let start_time = p.start_time.and_then(nonzero);
+            let rss_bytes = p.rss_bytes.and_then(nonzero);
+            let virtual_bytes = p.virtual_bytes.and_then(nonzero);
             if birth_id.is_none()
                 || start_time.is_none()
                 || rss_bytes.is_none()
@@ -163,8 +156,8 @@ impl Sampler {
                 ("start_time", start_time.is_none()),
                 ("rss_bytes", rss_bytes.is_none()),
                 ("virtual_bytes", virtual_bytes.is_none()),
-                ("ppid", p.parent().is_none()),
-                ("uid", p.user_id().is_none()),
+                ("ppid", p.ppid.is_none()),
+                ("uid", p.uid.is_none()),
             ] {
                 if missing {
                     unavailable.insert(field.into(), "unknown".into());
@@ -173,14 +166,10 @@ impl Sampler {
             if birth_id.is_none() {
                 unavailable.insert("birth_id".into(), "unknown".into());
             }
-            // On macOS CPU and memory come from the same task-info read; an
-            // inaccessible task otherwise looks like a permanently idle process.
-            let counters_available =
-                !cfg!(target_os = "macos") || rss_bytes.is_some() || virtual_bytes.is_some();
-            let cpu_percent = if self.request.cpu && counters_available {
+            let cpu_percent = if self.request.cpu {
                 birth_id.as_ref().and_then(|birth| {
                     let previous = self.baselines.get(&id)?;
-                    cpu_delta(previous, birth, p.accumulated_cpu_time(), measured_at)
+                    cpu_delta(previous, birth, p.cpu_counter?, p.cpu_at)
                 })
             } else {
                 None
@@ -197,39 +186,31 @@ impl Sampler {
                 );
             }
             if self.request.cpu
-                && counters_available
+                && let Some(counter) = p.cpu_counter
                 && let Some(birth) = &birth_id
             {
                 next_baselines.insert(
                     id,
                     Baseline {
                         birth_id: birth.clone(),
-                        counter: p.accumulated_cpu_time(),
-                        at: measured_at,
+                        counter,
+                        at: p.cpu_at,
                     },
                 );
             }
-            let uid = p.user_id().map(|u| u.to_string());
+            let uid = p.uid.as_ref().map(|uid| uid.to_string());
             let user = p
-                .user_id()
+                .uid
+                .as_ref()
                 .and_then(|id| self.users.name(id))
                 .map(str::to_owned);
-            let exe = self
-                .request
-                .details
-                .then(|| p.exe().map(|p| p.to_string_lossy().into_owned()))
-                .flatten();
-            let cwd = self
-                .request
-                .details
-                .then(|| p.cwd().map(|p| p.to_string_lossy().into_owned()))
-                .flatten();
-            let io = p.disk_usage();
-            // sysinfo does not expose read failure separately from zero counters.
-            let io_read_bytes =
-                (self.request.details && io.total_read_bytes > 0).then_some(io.total_read_bytes);
-            let io_written_bytes = (self.request.details && io.total_written_bytes > 0)
-                .then_some(io.total_written_bytes);
+            let exe = p.exe;
+            let cwd = p.cwd;
+            let cmdline = p.cmdline;
+            let threads = p.threads;
+            // Preserve the public treatment of ambiguous zero memory/I/O facts.
+            let io_read_bytes = p.io_read_bytes.and_then(nonzero);
+            let io_written_bytes = p.io_written_bytes.and_then(nonzero);
             for (field, missing) in [
                 ("exe", exe.is_none()),
                 ("cwd", cwd.is_none()),
@@ -262,12 +243,12 @@ impl Sampler {
                 start_time,
                 birth_id,
                 unavailable,
-                ppid: p.parent().map(Pid::as_u32),
-                name: p.name().to_string_lossy().into_owned(),
+                ppid: p.ppid,
+                name: p.name,
                 exe,
                 cmdline,
                 cwd,
-                state: state_name(p.status()).into(),
+                state: state_name(p.state).into(),
                 user,
                 uid,
                 cpu_percent,
@@ -278,17 +259,11 @@ impl Sampler {
                 io_written_bytes,
             };
             // Recheck selectors on the identity-validated facts, after binding the PID.
-            if self
-                .request
-                .name
-                .as_ref()
-                .is_none_or(|name| process.name_matches(name))
-                && self
-                    .request
-                    .user
-                    .as_ref()
-                    .is_none_or(|user| process.user_matches(user))
-            {
+            if self.request.matches(
+                &process.name,
+                process.uid.as_deref(),
+                process.user.as_deref(),
+            ) {
                 processes.push(process);
             }
         }
@@ -325,36 +300,6 @@ impl Sampler {
 // The backend cannot distinguish inaccessible scalar counters from zero.
 fn nonzero(value: u64) -> Option<u64> {
     (value != 0).then_some(value)
-}
-
-fn command_line(process: &sysinfo::Process) -> Vec<String> {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        crate::process_args::read(process.pid().as_u32())
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        process
-            .cmd()
-            .iter()
-            .map(|s| s.to_string_lossy().into_owned())
-            .collect()
-    }
-}
-
-// sysinfo's task set excludes the main thread and hides directory-read failures.
-// Read the kernel's total instead, inside the same native identity checks.
-#[cfg(target_os = "linux")]
-fn thread_count(pid: u32) -> Option<u32> {
-    std::fs::read_to_string(format!("/proc/{pid}/status"))
-        .ok()?
-        .lines()
-        .find_map(|line| line.strip_prefix("Threads:")?.trim().parse::<u32>().ok())
-        .filter(|&count| count > 0)
-}
-#[cfg(not(target_os = "linux"))]
-fn thread_count(_pid: u32) -> Option<u32> {
-    None
 }
 
 fn cpu_delta(previous: &Baseline, birth: &str, counter: u64, at: Instant) -> Option<f32> {
