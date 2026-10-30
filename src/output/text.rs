@@ -27,7 +27,9 @@ fn append_value(out: &mut String, prefix: &str, value: &str, width: usize) {
             // Width can depend on context across graphemes (e.g. Lam-Alef).
             for (index, grapheme) in remaining.grapheme_indices(true) {
                 let next = index + grapheme.len();
-                if index > 0 && remaining[..next].width() > available {
+                // unicode-width's rules bound display width by UTF-8 length.
+                // Only measure a contextual prefix when it could exceed the line.
+                if index > 0 && next > available && remaining[..next].width() > available {
                     break;
                 }
                 end = next;
@@ -138,6 +140,19 @@ mod tests {
     }
 
     #[test]
+    fn unicode_table_preserves_the_byte_width_bound() {
+        // Protect the fast path against Unicode-table changes, including
+        // unusually wide characters such as the three-cell Khmer BEYYAL.
+        let mut bytes = [0; 4];
+        for codepoint in 0..=0x10ffff {
+            if let Some(ch) = char::from_u32(codepoint) {
+                let value = ch.encode_utf8(&mut bytes);
+                assert!(value.width() <= value.len(), "U+{codepoint:04X}");
+            }
+        }
+    }
+
+    #[test]
     fn unicode_and_control_fallback_preserves_contextual_width() {
         for value in [
             "لاx",
@@ -145,6 +160,7 @@ mod tests {
             "日本語/👩‍💻/❤️/  padded  ",
             "e\u{301}/\u{301} a\u{a0}b\u{2003}c",
             "a\t b\r\nc\x1b\x7f",
+            "\u{17d8}\u{17d8}\u{17d8}/\u{16d67}\u{16d67}\u{16d68}",
         ] {
             check_wrapping(value);
         }
