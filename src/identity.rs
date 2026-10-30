@@ -29,7 +29,7 @@ mod platform {
 
     pub(super) fn birth_id(pid: u32) -> Option<String> {
         super::proc_stat::read(pid, |stat| {
-            Some(format!("linux:{}", stat.number::<u64>(22)?))
+            stat.number::<u64>(22).map(super::proc_stat::birth_id)
         })
     }
 

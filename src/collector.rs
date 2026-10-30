@@ -26,10 +26,14 @@ pub struct Request {
 }
 
 impl Request {
-    fn matches(&self, name: &str, uid: Option<&str>, user: Option<&str>) -> bool {
+    fn name_matches(&self, name: &str) -> bool {
         self.name
             .as_ref()
             .is_none_or(|needle| name.to_lowercase().contains(&needle.to_lowercase()))
+    }
+
+    fn matches(&self, name: &str, uid: Option<&str>, user: Option<&str>) -> bool {
+        self.name_matches(name)
             && self
                 .user
                 .as_ref()

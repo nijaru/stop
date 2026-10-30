@@ -68,6 +68,11 @@ pub(super) fn acquire(request: &Request, users: &mut UserNames) -> Result<Acquis
             continue;
         };
         total_processes += 1;
+        // Names are already in stat. Count the basic observation, but avoid a
+        // status read for rejected names. Explicit PIDs still bind before filters.
+        if request.pid.is_none() && !request.name_matches(&facts.name) {
+            continue;
+        }
         if read_file(format!("/proc/{pid}/status"), &mut bytes).is_ok() {
             let status = Status::parse(&bytes);
             facts.uid = status.uid;
@@ -140,7 +145,7 @@ fn basic(pid: u32, stat: Stat<'_>, units: &Units, cpu: bool) -> Option<Facts> {
     };
     Some(Facts {
         pid,
-        birth_before: Some(format!("linux:{ticks}")),
+        birth_before: Some(proc_stat::birth_id(ticks)),
         birth_after: None,
         name: String::from_utf8_lossy(stat.name).into_owned(),
         ppid: stat.number::<u32>(4).filter(|&pid| pid > 0),

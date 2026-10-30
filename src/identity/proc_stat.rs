@@ -39,6 +39,10 @@ impl<'a> Stat<'a> {
     }
 }
 
+pub(crate) fn birth_id(start_ticks: u64) -> String {
+    format!("linux:{start_ticks}")
+}
+
 pub(crate) fn read<T>(pid: u32, parse: impl FnOnce(Stat<'_>) -> Option<T>) -> Option<T> {
     read_record(File::open(format!("/proc/{pid}/stat")).ok()?, parse)
 }
