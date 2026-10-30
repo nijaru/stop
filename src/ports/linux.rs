@@ -136,15 +136,15 @@ fn parse_socket_line(
     tcp_only: bool,
     port: u16,
 ) -> Option<(u64, PortSocket)> {
-    let fields: Vec<&str> = line.split_whitespace().collect();
-    let local = fields.get(1)?;
-    let state = fields.get(3)?;
-    let inode = fields.get(9)?.parse::<u64>().ok()?;
+    let mut fields = line.split_whitespace();
+    let local = fields.nth(1)?;
     let (address_hex, port_hex) = local.split_once(':')?;
     let local_port = u16::from_str_radix(port_hex, 16).ok()?;
-    if local_port != port || (tcp_only && *state != TCP_LISTEN) {
+    let state = fields.nth(1)?;
+    if local_port != port || (tcp_only && state != TCP_LISTEN) {
         return None;
     }
+    let inode = fields.nth(5)?.parse::<u64>().ok()?;
 
     Some((
         inode,
@@ -193,7 +193,9 @@ mod tests {
     #[test]
     fn parses_listening_tcp_line() {
         let line = "  0: 0100007F:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000   1000        0 12345 1 0000000000000000 100 0 0 10 0";
-        let (_, socket) = parse_socket_line(line, "tcp", true, 3000).expect("line matches");
+        let (inode, socket) = parse_socket_line(line, "tcp", true, 3000).expect("line matches");
+        assert_eq!(inode, 12345);
+        assert!(parse_socket_line(&line.replace("12345", "invalid"), "tcp", true, 3000).is_none());
         assert_eq!(socket.protocol, "tcp");
         assert_eq!(socket.local_address, "127.0.0.1");
         assert_eq!(socket.local_port, 3000);
@@ -209,7 +211,8 @@ mod tests {
     #[test]
     fn parses_bound_udp_line() {
         let line = "  0: 00000000:0BB8 00000000:0000 07 00000000:00000000 00:00000000 00000000   1000        0 12345 1 0000000000000000 100 0 0 10 0";
-        let (_, socket) = parse_socket_line(line, "udp", false, 3000).expect("line matches");
+        let (inode, socket) = parse_socket_line(line, "udp", false, 3000).expect("line matches");
+        assert_eq!(inode, 12345);
         assert_eq!(socket.local_address, "0.0.0.0");
         assert_eq!(socket.state, "bound");
     }

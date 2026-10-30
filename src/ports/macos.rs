@@ -7,6 +7,7 @@ use super::{PortScan, PortSocket, SocketRecord, same_birth_id};
 use crate::error::StopError;
 use crate::identity::birth_id;
 use crate::libproc::{buffer_size, returned_count};
+
 const PROC_PIDFDSOCKETINFO: libc::c_int = 3;
 const PROX_FDTYPE_SOCKET: u32 = libc::PROX_FDTYPE_SOCKET as u32;
 const TCP_LISTEN: i32 = 1;
@@ -26,6 +27,7 @@ pub(super) fn scan(port: u16) -> Result<PortScan, StopError> {
     let mut records = Vec::new();
     let mut inaccessible_processes = 0;
     let mut unattributed_sockets = 0;
+    let mut fds = vec![empty_fd(); 256];
 
     for pid in pids {
         // Native discovery filters non-positive PIDs; keep conversion explicit.
@@ -37,7 +39,7 @@ pub(super) fn scan(port: u16) -> Result<PortScan, StopError> {
             inaccessible_processes += 1;
             continue;
         };
-        let Ok((sockets, process_inaccessible)) = scan_fds(pid, port) else {
+        let Ok((sockets, process_inaccessible)) = scan_fds(pid, port, &mut fds) else {
             inaccessible_processes += 1;
             continue;
         };
@@ -64,18 +66,15 @@ pub(super) fn scan(port: u16) -> Result<PortScan, StopError> {
     })
 }
 
-fn scan_fds(pid: libc::pid_t, port: u16) -> io::Result<(Vec<PortSocket>, bool)> {
-    // SAFETY: a null buffer and zero size request only the required byte count.
-    let fd_bytes = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, ptr::null_mut(), 0) };
-    let fd_count = returned_count::<libc::proc_fdinfo>(fd_bytes, usize::MAX)?;
-    let mut fds = vec![
-        libc::proc_fdinfo {
-            proc_fd: 0,
-            proc_fdtype: 0,
-        };
-        fd_count + 64
-    ];
-    let capacity = buffer_size(&fds)?;
+fn empty_fd() -> libc::proc_fdinfo {
+    libc::proc_fdinfo {
+        proc_fd: 0,
+        proc_fdtype: 0,
+    }
+}
+
+fn read_fds(pid: libc::pid_t, fds: &mut [libc::proc_fdinfo]) -> io::Result<usize> {
+    let capacity = buffer_size(fds)?;
     // SAFETY: fds is aligned, initialized writable storage of capacity bytes.
     // proc_pidinfo performs a synchronous copy and retains no buffer pointer.
     let filled = unsafe {
@@ -87,8 +86,31 @@ fn scan_fds(pid: libc::pid_t, port: u16) -> io::Result<(Vec<PortSocket>, bool)> 
             capacity,
         )
     };
-    let filled_count = returned_count::<libc::proc_fdinfo>(filled, fds.len())?;
-    // A full buffer may have omitted FDs added since the sizing query.
+    returned_count::<libc::proc_fdinfo>(filled, fds.len())
+}
+
+fn scan_fds(
+    pid: libc::pid_t,
+    port: u16,
+    fds: &mut Vec<libc::proc_fdinfo>,
+) -> io::Result<(Vec<PortSocket>, bool)> {
+    let mut filled_count = read_fds(pid, fds)?;
+    if filled_count == fds.len() {
+        // Size only when the shared buffer fills. Retry once with current demand
+        // plus slack; a growing table that fills it again remains explicitly partial.
+        // SAFETY: null buffer and zero size request only the required byte count.
+        let bytes =
+            unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, ptr::null_mut(), 0) };
+        let count = returned_count::<libc::proc_fdinfo>(bytes, usize::MAX)?;
+        let capacity = (count + 64).max(fds.len() * 2);
+        if capacity > libc::c_int::MAX as usize / size_of::<libc::proc_fdinfo>() {
+            return Err(io::Error::other(
+                "process info exceeds libproc buffer limit",
+            ));
+        }
+        fds.resize(capacity, empty_fd());
+        filled_count = read_fds(pid, fds)?;
+    }
     let mut process_inaccessible = filled_count == fds.len();
     let mut sockets = Vec::new();
     let info_size = libc::c_int::try_from(size_of::<SocketFdInfo>())
@@ -168,6 +190,62 @@ fn read_i32(bytes: &[u8], offset: usize) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grows_and_reuses_fd_storage_without_reading_stale_entries() {
+        use std::io::Read;
+        use std::process::{Child, Command, Stdio};
+
+        struct OwnedChild(Child);
+        impl Drop for OwnedChild {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut fds = vec![empty_fd(); 1];
+        let (sockets, _) = scan_fds(
+            libc::pid_t::try_from(std::process::id()).unwrap(),
+            port,
+            &mut fds,
+        )
+        .unwrap();
+        assert!(
+            sockets
+                .iter()
+                .any(|socket| socket.protocol == "tcp" && socket.local_port == port)
+        );
+        assert!(fds.len() > 1);
+
+        let mut child = OwnedChild(
+            Command::new("/bin/sh")
+                .args(["-c", "printf ready; read line"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        child
+            .0
+            .stdout
+            .as_mut()
+            .unwrap()
+            .read_exact(&mut [0; 5])
+            .unwrap();
+        // A stable child has far fewer FDs than this buffer. Poison the unused
+        // tail: inspecting it would falsely mark the child's scan inaccessible.
+        fds.fill(libc::proc_fdinfo {
+            proc_fd: libc::c_int::MAX,
+            proc_fdtype: PROX_FDTYPE_SOCKET,
+        });
+        let (sockets, partial) =
+            scan_fds(libc::pid_t::try_from(child.0.id()).unwrap(), port, &mut fds).unwrap();
+        assert!(sockets.is_empty());
+        assert!(!partial);
+    }
 
     #[test]
     fn socket_info_layout_matches_macos_header() {
