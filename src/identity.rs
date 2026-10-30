@@ -22,11 +22,32 @@ pub fn scope_id() -> Option<String> {
 #[cfg(target_os = "linux")]
 mod platform {
     use std::fs;
+    use std::io::{self, Read};
     use std::os::unix::fs::MetadataExt;
 
     pub(super) fn birth_id(pid: u32) -> Option<String> {
-        let stat = fs::read(format!("/proc/{pid}/stat")).ok()?;
-        Some(format!("linux:{}", stat_start_ticks(&stat)?))
+        let file = fs::File::open(format!("/proc/{pid}/stat")).ok()?;
+        Some(format!("linux:{}", read_start_ticks(file)?))
+    }
+
+    fn read_start_ticks(mut reader: impl Read) -> Option<u64> {
+        // Procfs reports size zero. Read the small record directly instead of
+        // asking File's generic read-to-end path for metadata and seek positions.
+        let mut bytes = [0u8; 4096];
+        let mut used = 0;
+        while used < bytes.len() {
+            match reader.read(&mut bytes[used..]) {
+                Ok(0) => return stat_start_ticks(&bytes[..used]),
+                Ok(n) => used += n,
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => return None,
+            }
+        }
+        // Do not parse an incomplete prefix as a birth token, even for records
+        // larger than the usual kernel stat record (or short intermediate reads).
+        let mut bytes = bytes.to_vec();
+        reader.read_to_end(&mut bytes).ok()?;
+        stat_start_ticks(&bytes)
     }
 
     pub(super) fn scope_id() -> Option<String> {
@@ -68,7 +89,8 @@ mod platform {
 
         #[test]
         fn parses_native_ticks_after_arbitrary_comm_bytes() {
-            for name in [b"normal".as_slice(), b"a (name) with )\n\xff"] {
+            let long_name = b"a ) S 1 2 ".repeat(500);
+            for name in [b"normal".as_slice(), b"a (name) with )\n\xff", &long_name] {
                 let mut stat = b"123 (".to_vec();
                 stat.extend_from_slice(name);
                 // Fields 3..21, then starttime (22), then another field.
@@ -76,6 +98,8 @@ mod platform {
                     b") S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654321 999\n",
                 );
                 assert_eq!(stat_start_ticks(&stat), Some(987654321));
+                let reader = (&stat[..3]).chain(&stat[3..]);
+                assert_eq!(read_start_ticks(reader), Some(987654321));
             }
         }
 
