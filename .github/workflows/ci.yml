@@ -53,6 +53,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ steps.toolchain.outputs.cachekey }}-
 
+      # A package-verification build can leave artifacts for the same crate
+      # identity tied to target/package rather than this checkout's sources.
+      # Keep cached dependencies, but always rebuild the application under test.
+      - name: Clean cached application artifacts
+        run: cargo clean --package stop-cli
+
       - name: Run tests
         run: cargo test --locked --verbose
 

@@ -3,6 +3,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python3 --version >/dev/null
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+# Package verification builds the same crate identity from target/package.
+# Isolate those artifacts so later workspace builds cannot reuse packaged sources.
+export CARGO_TARGET_DIR="$work/target"
 
 cargo package --locked
 archive=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c '
@@ -13,8 +18,6 @@ print(pathlib.Path(metadata["target_directory"]) / "package" / (pkg["name"] + "-
 ')
 package=$(basename "$archive" .crate)
 version=${package#stop-cli-}
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
 
 tar -xzf "$archive" -C "$work"
 test -f "$work/$package/Cargo.lock"
