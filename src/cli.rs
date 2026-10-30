@@ -2,7 +2,8 @@
 
 use std::time::Duration;
 
-use clap::{Args, Parser, Subcommand};
+use clap::builder::TypedValueParser;
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::model::SortKey;
 
@@ -11,12 +12,11 @@ pub const DEFAULT_CPU_WINDOW: Duration = Duration::from_millis(250);
 #[derive(Parser, Debug)]
 #[command(
     name = "stop",
+    bin_name = "stop",
     version,
-    about = "Inspect processes without leaving the shell",
-    long_about = "One-shot process inspection. With no command, show a system summary and the \
-    top 10 processes by CPU. List inventories immediately; inspect resolves an exact name or PID; \
-    tree shows current parent relationships; sample collects a finite series.\n\n\
-    Process CPU is percent of one core (may exceed 100%); system CPU is normalized across cores."
+    about = "Show process CPU, memory, and details",
+    after_help = "With no command, show system usage and the top 10 processes by CPU.\n\
+    Process CPU uses one core as 100%; system CPU uses all cores as 100%."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -29,28 +29,28 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Inventory visible processes immediately (default order: PID).
+    /// List processes (default order: PID).
     List(QueryArgs),
-    /// Inspect one PID/exact name, or visible owners of a port.
+    /// Show details for a process or port.
     Inspect(InspectArgs),
-    /// System summary and ranked processes (default: top 10 by CPU).
+    /// Show system usage and top processes (default: top 10 by CPU).
     Top(QueryArgs),
-    /// Show observed parent relationships, optionally rooted at a PID/exact name.
+    /// Show a process tree.
     Tree(TreeArgs),
-    /// Print a finite series as points arrive (default: five top-10 CPU reports).
+    /// Sample process usage (default: 5 reports, 1 second apart).
     Sample(SampleArgs),
 }
 
 #[derive(Args, Debug, Default)]
 pub struct OutputArgs {
-    /// Emit one JSON document instead of human output.
-    #[arg(long, global = true, conflicts_with = "jsonl")]
+    /// Output JSON.
+    #[arg(long, global = true, display_order = 90, conflicts_with = "jsonl")]
     pub json: bool,
     /// Pretty-print JSON (implies --json).
-    #[arg(long, global = true, conflicts_with = "jsonl")]
+    #[arg(long, global = true, display_order = 91, conflicts_with = "jsonl")]
     pub pretty: bool,
-    /// Stream one JSON object per sample (sample only).
-    #[arg(long, global = true, conflicts_with_all = ["json", "pretty"])]
+    /// Output one JSON object per sample.
+    #[arg(long, global = true, display_order = 92, conflicts_with_all = ["json", "pretty"])]
     pub jsonl: bool,
 }
 
@@ -62,8 +62,8 @@ impl OutputArgs {
 
 #[derive(Args, Debug, Default)]
 pub struct CollectionArgs {
-    /// Measure CPU; optionally choose a window with --cpu=500ms (default: 250ms).
-    #[arg(long, global = true, num_args = 0..=1, require_equals = true,
+    /// Measure CPU (default: 250ms; use --cpu=500ms to change).
+    #[arg(long, global = true, display_order = 80, num_args = 0..=1, require_equals = true,
         default_missing_value = "250ms", value_name = "DURATION", value_parser = parse_cpu_window)]
     pub cpu: Option<Duration>,
 }
@@ -77,32 +77,32 @@ impl CollectionArgs {
 
 #[derive(Args, Debug, Default)]
 pub struct QueryArgs {
-    /// Select a PID (sample pins its first observed identity).
+    /// Filter by process ID.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     pub pid: Option<u32>,
-    /// Case-insensitive substring search on process names.
+    /// Filter by part of a process name (case-insensitive).
     #[arg(short, long)]
     pub name: Option<String>,
-    /// Filter by username or raw UID.
+    /// Filter by username or UID.
     #[arg(short, long)]
     pub user: Option<String>,
-    /// Rank by CPU/RSS or order by PID/name (top accepts only cpu/mem).
+    /// Sort by CPU, memory (RSS), PID, or name.
     #[arg(short, long, value_enum)]
     pub sort: Option<SortKey>,
-    /// Positive maximum row count after filtering and sorting.
-    #[arg(short, long, value_parser = parse_limit)]
+    /// Show at most N processes.
+    #[arg(short, long, value_name = "N", value_parser = parse_limit)]
     pub limit: Option<usize>,
 }
 
 #[derive(Args, Debug)]
 #[group(required = true, multiple = false)]
 pub struct InspectArgs {
-    /// Canonical decimal PID or exact process name (case-insensitive).
+    /// Process ID or exact name (case-insensitive).
     pub target: Option<String>,
-    /// Exact process name, including numeric names (not substring search).
+    /// Select by exact name, even if the name is a number.
     #[arg(long)]
     pub name: Option<String>,
-    /// Visible TCP listeners and UDP bindings on a port.
+    /// Find processes listening on a TCP port or bound to a UDP port.
     #[arg(long, value_parser = clap::value_parser!(u16).range(1..=65535))]
     pub port: Option<u16>,
 }
@@ -110,9 +110,9 @@ pub struct InspectArgs {
 #[derive(Args, Debug)]
 #[group(multiple = false)]
 pub struct TreeArgs {
-    /// Optional root: canonical decimal PID or exact process name.
+    /// Root process ID or exact name (default: all processes).
     pub target: Option<String>,
-    /// Exact process name, including numeric names.
+    /// Select the root by exact name, even if the name is a number.
     #[arg(long)]
     pub name: Option<String>,
 }
@@ -121,13 +121,13 @@ pub struct TreeArgs {
 pub struct SampleArgs {
     #[command(flatten)]
     pub query: QueryArgs,
-    /// Number of observations (1..=1000).
+    /// Number of reports (1-1000).
     #[arg(long, default_value_t = 5, value_parser = parse_sample_count)]
     pub count: usize,
-    /// Start-to-start period, e.g. 250ms, 1s, 1m (default: 1s; minimum: 200ms).
+    /// Time between samples (200ms-24h; default: 1s).
     #[arg(long, value_name = "DURATION", value_parser = parse_cpu_window, conflicts_with = "rate")]
     pub interval: Option<Duration>,
-    /// Samples per second; alternative to --interval (maximum: 5 Hz).
+    /// Samples per second, instead of --interval (maximum: 5).
     #[arg(long, value_name = "HZ", value_parser = parse_sample_rate, conflicts_with = "interval")]
     pub rate: Option<f64>,
 }
@@ -141,18 +141,50 @@ impl SampleArgs {
 }
 
 impl Cli {
+    pub fn parse_args(raw: Vec<std::ffi::OsString>) -> Result<Self, clap::Error> {
+        let command = Self::command();
+        let global = |id: &str| {
+            command
+                .get_arguments()
+                .find(|arg| arg.get_id() == id)
+                .expect("global option is defined on Cli")
+                .clone()
+        };
+        let jsonl = global("jsonl");
+        let cpu = global("cpu");
+        // Local copies override help visibility while globals remain accepted
+        // before or after a subcommand.
+        let command = command
+            .mut_arg("jsonl", |arg| arg.hide(true))
+            .mut_subcommand("sample", |sub| sub.arg(jsonl).arg(cpu.hide(true)))
+            .mut_subcommand("top", |sub| {
+                sub.mut_arg("sort", |arg| {
+                    arg.help("Sort by CPU or memory (RSS)").value_parser(
+                        clap::builder::PossibleValuesParser::new(["cpu", "mem"]).map(|value| {
+                            if value == "cpu" {
+                                SortKey::Cpu
+                            } else {
+                                SortKey::Mem
+                            }
+                        }),
+                    )
+                })
+            });
+        let matches = command.try_get_matches_from(raw)?;
+        Self::from_arg_matches(&matches)
+    }
+
     pub fn validate(&self) -> Result<(), String> {
+        // clap checks conflicts within one command's arguments, but global
+        // options can arrive on opposite sides of a subcommand.
+        if self.output.jsonl && self.output.document() {
+            return Err("--jsonl cannot be combined with --json or --pretty".into());
+        }
         if self.output.jsonl && !matches!(self.command, Some(Command::Sample(_))) {
             return Err("--jsonl is only supported by sample".into());
         }
         if matches!(self.command, Some(Command::Sample(_))) && self.collection.cpu.is_some() {
-            return Err("sample measures CPU over --interval; do not combine it with --cpu".into());
-        }
-        if let Some(Command::Top(q)) = &self.command
-            && q.sort
-                .is_some_and(|s| !matches!(s, SortKey::Cpu | SortKey::Mem))
-        {
-            return Err("top --sort accepts cpu or mem; use list for pid/name ordering".into());
+            return Err("sample measures CPU automatically; remove --cpu".into());
         }
         Ok(())
     }
@@ -167,13 +199,11 @@ fn parse_limit(value: &str) -> Result<usize, String> {
 }
 
 fn parse_sample_count(value: &str) -> Result<usize, String> {
-    parse_limit(value).and_then(|n| {
-        if n <= 1000 {
-            Ok(n)
-        } else {
-            Err("count must be between 1 and 1000".into())
-        }
-    })
+    value
+        .parse::<usize>()
+        .ok()
+        .filter(|n| (1..=1000).contains(n))
+        .ok_or_else(|| "count must be between 1 and 1000".into())
 }
 
 fn parse_cpu_window(value: &str) -> Result<Duration, String> {
@@ -193,7 +223,7 @@ fn parse_cpu_window(value: &str) -> Result<Duration, String> {
         || seconds < sysinfo::MINIMUM_CPU_UPDATE_INTERVAL.as_secs_f64()
         || seconds > 86400.0
     {
-        return Err("CPU windows and sampling intervals must be between 200ms and 24h".into());
+        return Err("duration must be between 200ms and 24h".into());
     }
     Ok(Duration::from_secs_f64(seconds))
 }
@@ -206,7 +236,7 @@ fn parse_sample_rate(value: &str) -> Result<f64, String> {
         || rate < 1.0 / 86400.0
         || rate > 1.0 / sysinfo::MINIMUM_CPU_UPDATE_INTERVAL.as_secs_f64()
     {
-        return Err("rate must describe a period between 200ms and 24h (maximum 5 Hz)".into());
+        return Err("rate must be between one sample per 24h and 5 samples per second".into());
     }
     Ok(rate)
 }

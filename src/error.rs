@@ -8,6 +8,10 @@ pub enum StopError {
     #[error("interrupted")]
     Interrupted,
 
+    /// A CLI diagnostic with escaped values and trusted layout.
+    #[error("{0}")]
+    Usage(String),
+
     #[error("{0}")]
     InvalidRequest(String),
 

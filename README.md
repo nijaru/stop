@@ -153,9 +153,10 @@ Sampling always measures CPU over its own cadence and rejects `--cpu`.
 
 Process CPU is percent of **one core**, so it can exceed 100%. System CPU is
 normalized across cores. A new process, unavailable counter, or invalid
-baseline yields `null`, not a fabricated zero. Human tables omit unrequested
-CPU columns and show `n/a` for unavailable measurements. Memory columns use
-RSS and explicit binary units such as MiB; JSON uses raw bytes.
+baseline yields `null`, not a fabricated zero. Human reports omit unrequested
+CPU columns and show `n/a` for unavailable values (`not supported` for fields
+the platform does not provide). Memory columns use RSS and explicit binary
+units such as MiB; JSON uses raw bytes.
 
 Unavailable scalar facts are `null`. The sparse `unavailable` map explains
 missing fields with `not_requested`, `missing_baseline`, `unknown`, or
@@ -166,6 +167,14 @@ some unreadable zero counters from real zero: ambiguous zero memory/I/O facts
 and zero start timestamps are reported as unknown. Thread counts are currently
 unsupported on macOS. Human output escapes terminal controls in process text;
 `NO_COLOR` disables color, which is otherwise terminal-only.
+
+Human reports use local time; process start times include the UTC offset.
+Sample headings show the local date and time to the millisecond. Detailed acquisition
+windows and CPU measurement intervals are available in JSON. Process tables
+shorten names and usernames to fit the terminal, without shortening numbers.
+A short notice identifies incomplete process data or an incomplete port
+search. An empty report means nothing was found, not that a process or port
+is guaranteed absent.
 
 ## JSON contract
 

@@ -53,7 +53,7 @@ impl PinnedTarget {
             TargetObservation::Observed(identity) => self.observe(identity.clone()),
             TargetObservation::Unavailable if self.identity.is_none() => {
                 return Err(StopError::Operational(
-                    "cannot safely sample this PID: native process identity is unavailable".into(),
+                    "cannot sample this PID: process birth ID unavailable".into(),
                 ));
             }
             _ => false,

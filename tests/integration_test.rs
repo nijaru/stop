@@ -72,6 +72,94 @@ fn help_lists_subcommands() {
 }
 
 #[test]
+fn help_only_advertises_applicable_options() {
+    for command in ["list", "inspect", "top", "tree", "sample"] {
+        let result = stop().args([command, "--help"]).output().unwrap();
+        assert!(result.status.success());
+        let text = String::from_utf8(result.stdout).unwrap();
+        assert_eq!(text.contains("--jsonl"), command == "sample", "{text}");
+        assert_eq!(text.contains("--cpu"), command != "sample", "{text}");
+        if command == "top" {
+            assert!(text.contains("[possible values: cpu, mem]"), "{text}");
+        }
+    }
+}
+
+#[test]
+fn usage_errors_keep_layout_and_escape_input() {
+    let output = stop()
+        .args(["list", "--bogus\n\x1b[31m\u{202e}"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let text = String::from_utf8(output.stderr).unwrap();
+    assert!(text.starts_with("error: unexpected argument"));
+    assert!(
+        text.contains("\n\nUsage: stop list [OPTIONS]\n\n"),
+        "{text}"
+    );
+    assert!(text.contains("--bogus\\n\\u{1b}[31m\\u{202e}"), "{text}");
+    assert!(!text.contains('\x1b') && !text.contains('\u{202e}'));
+}
+
+#[test]
+fn sample_count_errors_identify_the_right_option() {
+    for count in ["0", "1001", "bad"] {
+        let output = stop().args(["sample", "--count", count]).output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let text = String::from_utf8(output.stderr).unwrap();
+        assert!(text.contains("count must be between 1 and 1000"), "{text}");
+    }
+}
+
+#[test]
+fn sample_globals_work_before_or_after_the_command() {
+    for args in [
+        vec!["--jsonl", "sample", "--count", "1"],
+        vec!["sample", "--jsonl", "--count", "1"],
+    ] {
+        let result = stop()
+            .args(args)
+            .args(["--pid", &std::process::id().to_string()])
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{result:?}");
+        let point: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(point["index"], 1);
+        assert_eq!(point["processes"][0]["pid"], std::process::id());
+    }
+    for args in [vec!["--cpu", "sample"], vec!["sample", "--cpu"]] {
+        let result = stop().args(args).output().unwrap();
+        assert_eq!(result.status.code(), Some(1));
+        assert!(
+            String::from_utf8(result.stderr)
+                .unwrap()
+                .contains("remove --cpu")
+        );
+    }
+}
+
+#[test]
+fn conflicting_formats_are_rejected_across_command_boundaries() {
+    for document in ["--json", "--pretty"] {
+        for args in [
+            vec![document, "sample", "--jsonl"],
+            vec!["--jsonl", "sample", document],
+            vec!["sample", document, "--jsonl"],
+            vec![document, "--jsonl", "sample"],
+        ] {
+            let output = stop().args(&args).args(["--count", "1"]).output().unwrap();
+            assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
+            assert!(output.stdout.is_empty());
+            let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+            assert_eq!(error["code"], "usage");
+        }
+    }
+}
+
+#[test]
 fn list_json_envelope_contract() {
     let v = list_json(&[]);
     for key in [
@@ -232,35 +320,59 @@ fn inspect_unknown_name_exits_two() {
 }
 
 #[test]
-fn inspect_ambiguous_name_exits_three_with_candidates() {
-    // Two live children share the name "sleep", making the target ambiguous.
+fn ambiguous_names_report_candidates_in_both_formats() {
+    // Allow for slow CLI launches on loaded CI hosts, rather than letting the
+    // fixture expire before name resolution. Always reap it before assertions.
     let mut children: Vec<std::process::Child> = (0..2)
         .map(|_| {
             std::process::Command::new("sleep")
-                .arg("10")
+                .arg("60")
                 .spawn()
-                .expect("spawn sleep")
+                .unwrap()
         })
         .collect();
-
-    let result = stop()
-        .args(["inspect", "sleep", "--json"])
-        .output()
-        .unwrap();
-
+    let pids: Vec<_> = children.iter().map(|child| child.id()).collect();
+    let results: Vec<_> = ["inspect", "tree"]
+        .into_iter()
+        .map(|command| {
+            let machine = stop().args([command, "sleep", "--json"]).output().unwrap();
+            let human = stop()
+                .args([command, "sleep"])
+                .env("TZ", "UTC")
+                .output()
+                .unwrap();
+            (machine, human)
+        })
+        .collect();
     for child in &mut children {
         let _ = child.kill();
         let _ = child.wait();
     }
-
-    assert_eq!(result.status.code(), Some(3));
-    let err: Value = serde_json::from_slice(&result.stderr).unwrap();
-    assert_eq!(err["code"].as_str().unwrap(), "ambiguous");
-    let candidates = err["candidates"].as_array().unwrap();
-    assert!(candidates.len() >= 2, "expected >=2 candidates");
-    for c in candidates {
-        assert!(c["pid"].as_u64().unwrap() > 0);
-        assert!(c["start_time"].is_u64());
+    for (machine, human) in results {
+        assert_eq!(machine.status.code(), Some(3));
+        assert_eq!(human.status.code(), Some(3));
+        assert!(machine.stdout.is_empty() && human.stdout.is_empty());
+        let err: Value = serde_json::from_slice(&machine.stderr).unwrap();
+        assert_eq!(err["code"], "ambiguous");
+        let candidates = err["candidates"].as_array().unwrap();
+        let text = String::from_utf8(human.stderr).unwrap();
+        for header in ["PID", "USER", "NAME", "STARTED", "PATH"] {
+            assert!(text.contains(header), "{text}");
+        }
+        for pid in &pids {
+            let candidate = candidates
+                .iter()
+                .find(|c| c["pid"] == *pid)
+                .expect("live child is a candidate");
+            let started =
+                chrono::DateTime::from_timestamp(candidate["start_time"].as_i64().unwrap(), 0)
+                    .unwrap();
+            assert!(text.contains(&pid.to_string()));
+            assert!(
+                text.contains(&started.format("%Y-%m-%d %H:%M:%S +00:00").to_string()),
+                "{text}"
+            );
+        }
     }
 }
 
@@ -367,30 +479,6 @@ fn tree_no_match_exits_two() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
-}
-
-#[test]
-fn tree_ambiguous_name_exits_three_with_candidates() {
-    let mut children: Vec<std::process::Child> = (0..2)
-        .map(|_| {
-            std::process::Command::new("sleep")
-                .arg("10")
-                .spawn()
-                .expect("spawn sleep")
-        })
-        .collect();
-
-    let result = stop().args(["tree", "--json", "sleep"]).output().unwrap();
-
-    for child in &mut children {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-
-    assert_eq!(result.status.code(), Some(3));
-    let err: Value = serde_json::from_slice(&result.stderr).unwrap();
-    assert_eq!(err["code"].as_str().unwrap(), "ambiguous");
-    assert!(err["candidates"].as_array().unwrap().len() >= 2);
 }
 
 #[test]
@@ -579,8 +667,8 @@ fn human_tables_only_show_requested_cpu_and_sampling_is_bounded() {
         .unwrap();
     assert!(sample.status.success());
     let text = String::from_utf8(sample.stdout).unwrap();
-    assert!(text.contains("SAMPLE 1/1") && text.contains("CPU%"));
-    assert!(text.contains("Showing 1 of"));
+    assert!(text.contains("Sample 1/1") && text.contains("CPU%"));
+    assert!(text.contains("1 of"));
 }
 
 #[test]

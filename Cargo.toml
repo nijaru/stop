@@ -31,6 +31,7 @@ owo-colors = "4.4"
 libc = "0.2"
 ctrlc = "3.5"
 unicode-width = "0.2"
+unicode-segmentation = "1.12"
 terminal_size = "0.4"
 
 [dev-dependencies]

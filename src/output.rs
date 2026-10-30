@@ -1,9 +1,7 @@
 //! Plain terminal reports and explicit JSON. Writers propagate early pipe closure.
 
-use owo_colors::OwoColorize;
 use serde::Serialize;
 use std::io::{self, IsTerminal, Write};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::cmd::tree::TreeNode;
 use crate::error::StopError;
@@ -13,7 +11,13 @@ use crate::model::{
 use crate::ports::{PortReport, Visibility};
 use crate::runtime::Cancellation;
 
+mod diagnostic;
+mod table;
 mod writer;
+
+use writer::Destination;
+
+pub use diagnostic::{print_help, report_error, usage_error};
 
 pub fn print_json<T: Serialize>(
     value: &T,
@@ -41,8 +45,12 @@ fn json_to<T: Serialize>(out: &mut impl Write, value: &T, pretty: bool) -> io::R
 fn write_stdout(value: &str, cancel: &Cancellation) -> Result<(), StopError> {
     writer::write(value.as_bytes(), cancel, writer::Destination::Stdout)
 }
-fn use_color() -> bool {
-    io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
+fn use_color(destination: Destination) -> bool {
+    let terminal = match destination {
+        Destination::Stdout => io::stdout().is_terminal(),
+        Destination::Stderr => io::stderr().is_terminal(),
+    };
+    terminal && std::env::var_os("NO_COLOR").is_none()
 }
 
 /// Escape process-controlled text, including invisible direction overrides.
@@ -59,52 +67,25 @@ pub fn safe(value: &str) -> String {
     }
     result
 }
-fn truncate(value: &str, width: usize) -> String {
-    if value.width() <= width {
-        return value.into();
-    }
-    let mut result = String::new();
-    let mut used = 0;
-    for c in value.chars() {
-        let next = c.width().unwrap_or(0);
-        if used + next > width.saturating_sub(1) {
-            break;
-        }
-        result.push(c);
-        used += next;
-    }
-    result.push('…');
-    result
-}
-fn pad(value: &str, width: usize, right: bool) -> String {
-    let space = " ".repeat(width.saturating_sub(value.width()));
-    if right {
-        format!("{space}{value}")
-    } else {
-        format!("{value}{space}")
-    }
-}
 fn bytes(value: u64) -> String {
     let (n, u) = format_bytes_parts(value);
     format!("{n} {u}")
 }
-fn terminal_width() -> usize {
-    if io::stdout().is_terminal() {
-        terminal_size::terminal_size()
-            .map(|(w, _)| usize::from(w.0))
-            .unwrap_or(100)
-    } else {
-        100
-    }
+fn terminal_width(destination: Destination) -> usize {
+    let size = match destination {
+        Destination::Stdout => terminal_size::terminal_size_of(io::stdout()),
+        Destination::Stderr => terminal_size::terminal_size_of(io::stderr()),
+    };
+    size.map(|(width, _)| usize::from(width.0)).unwrap_or(100)
 }
 
-fn table(processes: &[ProcessInfo], cpu: bool) -> String {
+fn process_table(processes: &[ProcessInfo], cpu: bool) -> String {
     let mut headers = vec!["PID", "USER", "NAME"];
     if cpu {
         headers.push("CPU%");
     }
     headers.push("RSS");
-    let mut rows: Vec<Vec<String>> = processes
+    let rows = processes
         .iter()
         .map(|p| {
             let mut row = vec![
@@ -123,49 +104,14 @@ fn table(processes: &[ProcessInfo], cpu: bool) -> String {
             row
         })
         .collect();
-    let mut widths: Vec<usize> = headers
-        .iter()
-        .enumerate()
-        .map(|(i, h)| {
-            rows.iter()
-                .map(|r| r[i].width())
-                .max()
-                .unwrap_or(0)
-                .max(h.width())
-        })
-        .collect();
-    // Only names/owners are shortened; numbers stay readable in narrow terminals.
-    widths[1] = widths[1].min(16);
-    let fixed = widths
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| *i != 2)
-        .map(|(_, w)| w)
-        .sum::<usize>()
-        + 2 * (widths.len() - 1);
-    widths[2] = widths[2].min(terminal_width().saturating_sub(fixed).max(8));
-    for row in &mut rows {
-        row[1] = truncate(&row[1], widths[1]);
-        row[2] = truncate(&row[2], widths[2]);
-    }
-    let render = |row: &[String]| {
-        row.iter()
-            .enumerate()
-            .map(|(i, s)| pad(s, widths[i], i == 0 || i >= 3))
-            .collect::<Vec<_>>()
-            .join("  ")
-    };
-    let heading = render(&headers.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-    let mut result = if use_color() {
-        format!("{}\n", heading.bold())
-    } else {
-        format!("{heading}\n")
-    };
-    for row in rows {
-        result.push_str(&render(&row));
-        result.push('\n');
-    }
-    result
+    table::render(
+        &headers,
+        rows,
+        &[0, 3, 4],
+        &[(2, usize::MAX), (1, 16)],
+        terminal_width(Destination::Stdout),
+        use_color(Destination::Stdout),
+    )
 }
 
 pub fn print_snapshot(
@@ -174,69 +120,100 @@ pub fn print_snapshot(
     cpu: bool,
     cancel: &Cancellation,
 ) -> Result<(), StopError> {
+    write_stdout(
+        &render_snapshot(snapshot, system, cpu, "No matching processes found"),
+        cancel,
+    )
+}
+
+fn render_snapshot(
+    snapshot: &Snapshot,
+    system: Option<&SystemMetrics>,
+    cpu: bool,
+    empty_message: &str,
+) -> String {
     let mut out = String::new();
     if let Some(system) = system {
         out.push_str(&system_header(system, cpu));
         out.push('\n');
     }
-    if let Some(ms) = snapshot.collection.cpu_interval_ms {
-        out.push_str(&format!("CPU measured over {ms} ms\n"));
-    }
     if snapshot.returned == 0 {
-        out.push_str("No visible processes matched.\n");
+        out.push_str(empty_message);
+        out.push('\n');
     } else {
-        out.push_str(&table(&snapshot.processes, cpu));
+        out.push_str(&process_table(&snapshot.processes, cpu));
     }
     if snapshot.truncated {
         out.push_str(&format!(
-            "Showing {} of {} matching processes ({} observed).\n",
-            snapshot.returned, snapshot.matched, snapshot.total_processes
+            "{} of {} processes\n",
+            snapshot.returned, snapshot.matched
         ));
     }
     append_visibility(&mut out, &snapshot.collection);
-    write_stdout(&out, cancel)
+    out
 }
+
+fn count_label(count: usize, singular: &str, plural: &str) -> String {
+    format!("{count} {}", if count == 1 { singular } else { plural })
+}
+
 fn append_visibility(out: &mut String, metadata: &CollectionMetadata) {
     if metadata.inaccessible_processes > 0 {
-        out.push_str(&format!("Visibility is partial: {} processes had limited facts or were lost during collection.\n",metadata.inaccessible_processes));
+        out.push_str(&format!(
+            "Incomplete data for {}\n",
+            count_label(metadata.inaccessible_processes, "process", "processes")
+        ));
     }
 }
 
 pub fn print_sample_point(point: &SamplePoint, cancel: &Cancellation) -> Result<(), StopError> {
-    write_stdout(
-        &format!(
-            "SAMPLE {}/{}  {}\n",
-            point.index, point.requested_count, point.snapshot.collection.collected_at
-        ),
-        cancel,
-    )?;
-    print_snapshot(&point.snapshot, Some(&point.system), true, cancel)?;
+    let time = chrono::DateTime::parse_from_rfc3339(&point.snapshot.collection.collected_at)
+        .expect("collection timestamps are RFC 3339")
+        .with_timezone(&chrono::Local)
+        .format("%Y-%m-%d %H:%M:%S%.3f")
+        .to_string();
+    let mut out = format!("Sample {}/{}  {time}\n", point.index, point.requested_count);
+    let empty_message = if point.target_status.as_deref() == Some("no_longer_observed") {
+        "Selected process no longer found"
+    } else {
+        "No matching processes found"
+    };
+    out.push_str(&render_snapshot(
+        &point.snapshot,
+        Some(&point.system),
+        true,
+        empty_message,
+    ));
     if point.skipped_intervals > 0 {
-        write_stdout(
-            &format!(
-                "Skipped {} elapsed schedule slots.\n",
-                point.skipped_intervals
-            ),
-            cancel,
-        )?;
+        out.push_str(&format!(
+            "Skipped {}\n",
+            count_label(point.skipped_intervals, "sample", "samples")
+        ));
     }
-    if point.target_status.as_deref() == Some("no_longer_observed") {
-        write_stdout(
-            "The selected process identity is no longer observed.\n",
-            cancel,
-        )?;
-    }
-    write_stdout("\n", cancel)
+    out.push('\n');
+    write_stdout(&out, cancel)
 }
 
-pub fn print_no_match(target: &str, cancel: &Cancellation) -> Result<(), StopError> {
-    write_stdout(
-        &format!(
-            "No visible process matching {}. Search names with stop list --name <name>.\n",
-            safe(&format!("{target:?}"))
-        ),
-        cancel,
-    )
+pub fn print_no_match(
+    target: &str,
+    metadata: &CollectionMetadata,
+    cancel: &Cancellation,
+) -> Result<(), StopError> {
+    let mut out = format!("No process found for {}\n", safe(&format!("{target:?}")));
+    append_visibility(&mut out, metadata);
+    write_stdout(&out, cancel)
+}
+
+fn format_start_time(timestamp: Option<u64>) -> String {
+    timestamp
+        .and_then(|s| i64::try_from(s).ok())
+        .and_then(|s| chrono::DateTime::from_timestamp(s, 0))
+        .map(|time| {
+            time.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S %:z")
+                .to_string()
+        })
+        .unwrap_or_else(|| "n/a".into())
 }
 
 pub fn print_process_detail(
@@ -249,30 +226,16 @@ pub fn print_process_detail(
         "{} · PID {}\nOwner {} · State {}\n\n",
         safe(&p.name),
         p.pid,
-        safe(
-            p.user
-                .as_deref()
-                .or(p.uid.as_deref())
-                .unwrap_or("unavailable")
-        ),
+        safe(p.user.as_deref().or(p.uid.as_deref()).unwrap_or("n/a")),
         safe(&p.state)
     );
-    let unavailable = |field: &str| {
-        format!(
-            "unavailable ({})",
-            p.unavailable
-                .get(field)
-                .map(String::as_str)
-                .unwrap_or("unknown")
-        )
+    let unavailable = |field: &str| match p.unavailable.get(field).map(String::as_str) {
+        Some("unsupported") => "not supported".to_owned(),
+        Some("not_requested") => "not measured".to_owned(),
+        Some("missing_baseline") => "n/a (no previous measurement)".to_owned(),
+        _ => "n/a".to_owned(),
     };
-    let start = p
-        .start_time
-        .and_then(|s| i64::try_from(s).ok())
-        .and_then(|s| chrono::DateTime::from_timestamp(s, 0));
-    let started = start
-        .map(|s| s.to_rfc3339())
-        .unwrap_or_else(|| "unavailable".into());
+    let started = format_start_time(p.start_time);
     let argv = p
         .cmdline
         .iter()
@@ -307,7 +270,7 @@ pub fn print_process_detail(
             "Parent",
             p.ppid
                 .map(|p| p.to_string())
-                .unwrap_or_else(|| "unavailable".into()),
+                .unwrap_or_else(|| "n/a".into()),
         ),
         (
             "RSS",
@@ -351,9 +314,6 @@ pub fn print_process_detail(
                 .unwrap_or_else(|| unavailable("cpu_percent"))
         ));
     }
-    if let Some(ms) = metadata.cpu_interval_ms {
-        out.push_str(&format!("CPU measured over {ms} ms\n"));
-    }
     append_visibility(&mut out, metadata);
     write_stdout(&out, cancel)
 }
@@ -370,7 +330,7 @@ pub fn system_header(metrics: &SystemMetrics, cpu: bool) -> String {
             metrics
                 .cpu_percent
                 .map(|v| format!("{v:.1}%"))
-                .unwrap_or_else(|| "unavailable".into())
+                .unwrap_or_else(|| "n/a".into())
         )
     } else {
         memory
@@ -379,12 +339,13 @@ pub fn system_header(metrics: &SystemMetrics, cpu: bool) -> String {
 
 pub fn print_process_tree(
     roots: &[TreeNode],
+    metadata: &CollectionMetadata,
     cpu: bool,
     cancel: &Cancellation,
 ) -> Result<(), StopError> {
-    write_stdout(&render_process_tree(roots, cpu), cancel)
+    write_stdout(&render_process_tree(roots, metadata, cpu), cancel)
 }
-pub fn render_process_tree(roots: &[TreeNode], cpu: bool) -> String {
+pub fn render_process_tree(roots: &[TreeNode], metadata: &CollectionMetadata, cpu: bool) -> String {
     fn label(node: &TreeNode, cpu: bool) -> String {
         let p = &node.process;
         format!(
@@ -416,6 +377,9 @@ pub fn render_process_tree(roots: &[TreeNode], cpu: bool) -> String {
         }
     }
     let mut out = String::new();
+    if roots.is_empty() {
+        out.push_str("No processes found\n");
+    }
     for root in roots {
         out.push_str(&label(root, cpu));
         out.push('\n');
@@ -423,147 +387,135 @@ pub fn render_process_tree(roots: &[TreeNode], cpu: bool) -> String {
             walk(child, "", i + 1 == root.children.len(), cpu, &mut out);
         }
     }
+    append_visibility(&mut out, metadata);
     out
 }
 
 pub fn print_port_report(
     report: &PortReport,
-    metadata: &CollectionMetadata,
     cpu: bool,
     cancel: &Cancellation,
 ) -> Result<(), StopError> {
-    let partial = report.visibility == Visibility::Partial;
-    let mut out = format!(
-        "PORT {} · Visibility {}\n",
-        report.port,
-        if partial {
-            "partial"
-        } else {
-            "complete within the observed scope"
-        }
-    );
+    write_stdout(&render_port_report(report, cpu), cancel)
+}
+
+fn render_port_report(report: &PortReport, cpu: bool) -> String {
+    let mut out = String::new();
     if report.owners.is_empty() {
-        out.push_str("No visible owner found.\n");
+        out.push_str(&format!("Port {}: no owner found\n", report.port));
     } else {
-        out.push_str(&format!(
-            "PID     USER          NAME                  PROTO  LOCAL{}\n",
-            if cpu { "  CPU%" } else { "" }
-        ));
-        for owner in &report.owners {
-            for socket in &owner.sockets {
-                let addr = if socket.local_address.contains(':') {
-                    format!("[{}]:{}", socket.local_address, socket.local_port)
-                } else {
-                    format!("{}:{}", socket.local_address, socket.local_port)
-                };
-                out.push_str(&format!(
-                    "{:<7} {}  {}  {:<5}  {}{}\n",
-                    owner.process.pid,
-                    pad(
-                        &truncate(&safe(owner.process.user.as_deref().unwrap_or("-")), 12),
-                        12,
-                        false
-                    ),
-                    pad(&truncate(&safe(&owner.process.name), 20), 20, false),
-                    safe(&socket.protocol),
-                    safe(&addr),
+        out.push_str(&format!("Port {}\n", report.port));
+        let mut headers = vec!["PID", "USER", "NAME", "PROTO", "LOCAL"];
+        if cpu {
+            headers.push("CPU%");
+        }
+        let rows = report
+            .owners
+            .iter()
+            .flat_map(|owner| {
+                owner.sockets.iter().map(|socket| {
+                    let addr = if socket.local_address.contains(':') {
+                        format!("[{}]:{}", socket.local_address, socket.local_port)
+                    } else {
+                        format!("{}:{}", socket.local_address, socket.local_port)
+                    };
+                    let mut row = vec![
+                        owner.process.pid.to_string(),
+                        safe(
+                            owner
+                                .process
+                                .user
+                                .as_deref()
+                                .or(owner.process.uid.as_deref())
+                                .unwrap_or("-"),
+                        ),
+                        safe(&owner.process.name),
+                        safe(&socket.protocol),
+                        safe(&addr),
+                    ];
                     if cpu {
-                        format!(
-                            "  {}",
+                        row.push(
                             owner
                                 .process
                                 .cpu_percent
                                 .map(|p| format!("{p:.1}"))
-                                .unwrap_or_else(|| "n/a".into())
-                        )
-                    } else {
-                        String::new()
+                                .unwrap_or_else(|| "n/a".into()),
+                        );
                     }
-                ));
-            }
+                    row
+                })
+            })
+            .collect();
+        out.push_str(&table::render(
+            &headers,
+            rows,
+            &[0, 5],
+            &[(2, usize::MAX), (1, 16)],
+            terminal_width(Destination::Stdout),
+            use_color(Destination::Stdout),
+        ));
+    }
+    if report.visibility == Visibility::Partial {
+        let mut reasons = Vec::new();
+        if report.inaccessible_processes > 0 {
+            reasons.push(format!(
+                "{} inaccessible",
+                count_label(report.inaccessible_processes, "process", "processes")
+            ));
         }
-    }
-    if let Some(ms) = metadata.cpu_interval_ms {
-        out.push_str(&format!("CPU measured over {ms} ms\n"));
-    }
-    append_visibility(&mut out, metadata);
-    if partial {
-        out.push_str(&format!("{} inaccessible processes; {} unattributed sockets. This does not establish that the port is free.\n",report.inaccessible_processes,report.unattributed_sockets));
-    }
-    write_stdout(&out, cancel)
-}
-
-pub fn print_help(help: &clap::Error, cancel: &Cancellation) -> Result<(), StopError> {
-    let help = help.render();
-    let text = if use_color() {
-        help.ansi().to_string()
-    } else {
-        help.to_string()
-    };
-    write_stdout(&text, cancel)
-}
-
-pub fn report_error(
-    err: &StopError,
-    machine: bool,
-    cancel: Option<&Cancellation>,
-) -> Result<(), StopError> {
-    let mut out = Vec::new();
-    if machine {
-        if let StopError::Resolve(err) = err {
-            json_to(&mut out, err, false)?;
-        } else {
-            #[derive(Serialize)]
-            struct ErrorPayload<'a> {
-                code: &'a str,
-                message: String,
-            }
-            let code = match err {
-                StopError::InvalidRequest(_) => "usage",
-                StopError::Interrupted => "interrupted",
-                StopError::UnsupportedPlatform => "unsupported_platform",
-                _ => "operational",
-            };
-            json_to(
-                &mut out,
-                &ErrorPayload {
-                    code,
-                    message: err.to_string(),
-                },
-                false,
-            )?;
+        if report.unattributed_sockets > 0 {
+            reasons.push(format!(
+                "{} without an owner",
+                count_label(report.unattributed_sockets, "socket", "sockets")
+            ));
         }
-    } else {
-        writeln!(out, "stop: {}", safe(&err.to_string()))?;
-        if let StopError::Resolve(err) = err {
-            for c in &err.candidates {
-                writeln!(
-                    out,
-                    "  PID {}  {}  {}  started {}  {}",
-                    c.pid,
-                    safe(&c.name),
-                    safe(c.user.as_deref().unwrap_or("-")),
-                    c.start_time
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "unavailable".into()),
-                    safe(c.exe.as_deref().or(c.cwd.as_deref()).unwrap_or(""))
-                )?;
-            }
-        }
+        out.push_str(&format!("Search incomplete: {}\n", reasons.join("; ")));
     }
-    if let Some(cancel) = cancel {
-        writer::write(&out, cancel, writer::Destination::Stderr)
-    } else {
-        // Handler installation failed. Leave descriptor flags alone: the
-        // default signal action must remain able to terminate a blocked write.
-        io::stderr().lock().write_all(&out)?;
-        Ok(())
-    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ports::{PortOwner, PortSocket};
+    use unicode_width::UnicodeWidthStr;
+
+    fn process() -> ProcessInfo {
+        ProcessInfo {
+            pid: 12345,
+            start_time: Some(1_700_000_000),
+            birth_id: Some("test".into()),
+            unavailable: Default::default(),
+            ppid: Some(1),
+            name: "日本語❤️".into(),
+            exe: None,
+            cmdline: vec![],
+            cwd: None,
+            state: "run".into(),
+            user: None,
+            uid: Some("501".into()),
+            cpu_percent: Some(12.3),
+            rss_bytes: Some(1024),
+            virtual_bytes: None,
+            threads: None,
+            io_read_bytes: None,
+            io_written_bytes: None,
+        }
+    }
+
+    fn metadata() -> CollectionMetadata {
+        CollectionMetadata {
+            schema_version: crate::model::SCHEMA_VERSION,
+            collection_started_at: "2026-01-01T00:00:00Z".into(),
+            collected_at: "2026-01-01T00:00:00Z".into(),
+            collection_duration_ms: 0,
+            cpu_interval_ms: None,
+            scope_id: Some("test".into()),
+            scope_pid: None,
+            inaccessible_processes: 1,
+        }
+    }
+
     #[test]
     fn untrusted_text_cannot_control_the_terminal() {
         assert_eq!(
@@ -571,10 +523,80 @@ mod tests {
             "node\\n\\u{1b}[31m\\t\\u{202e}"
         );
     }
+
     #[test]
-    fn truncation_and_alignment_use_display_cells() {
-        assert_eq!(truncate("日本語abcd", 6), "日本…");
-        assert_eq!(pad("日本", 6, false), "日本  ");
-        assert_eq!(pad("日本", 6, true), "  日本");
+    fn trees_report_data_gaps_even_when_empty() {
+        for roots in [
+            vec![],
+            vec![TreeNode {
+                process: process(),
+                children: vec![],
+            }],
+        ] {
+            let text = render_process_tree(&roots, &metadata(), false);
+            assert!(text.contains("Incomplete data for 1 process\n"), "{text}");
+            if roots.is_empty() {
+                assert!(text.starts_with("No processes found\n"));
+            } else {
+                assert!(text.starts_with("12345"));
+            }
+        }
+    }
+
+    #[test]
+    fn port_columns_align_with_unicode_names_and_uid_fallback() {
+        let report = PortReport {
+            port: 3000,
+            visibility: Visibility::Partial,
+            inaccessible_processes: 2,
+            unattributed_sockets: 1,
+            owners: vec![PortOwner {
+                process: process(),
+                sockets: vec![PortSocket {
+                    protocol: "tcp".into(),
+                    local_address: "::1".into(),
+                    local_port: 3000,
+                    state: "listen".into(),
+                }],
+            }],
+        };
+        let text = render_port_report(&report, true);
+        let lines: Vec<_> = text.lines().collect();
+        let header = lines[1];
+        let row = lines[2];
+        for (label, value) in [("USER", "501"), ("PROTO", "tcp"), ("LOCAL", "[::1]:3000")] {
+            assert_eq!(
+                header[..header.find(label).unwrap()].width(),
+                row[..row.find(value).unwrap()].width(),
+                "{text}"
+            );
+        }
+        assert!(row.trim_end().ends_with("12.3"), "{text}");
+        assert_eq!(text.matches("Search incomplete:").count(), 1);
+        assert!(
+            text.contains("2 processes inaccessible; 1 socket without an owner"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn empty_port_reports_do_not_claim_the_port_is_free() {
+        let mut report = PortReport {
+            port: 3000,
+            visibility: Visibility::Complete,
+            inaccessible_processes: 0,
+            unattributed_sockets: 0,
+            owners: vec![],
+        };
+        assert_eq!(
+            render_port_report(&report, false),
+            "Port 3000: no owner found\n"
+        );
+        report.visibility = Visibility::Partial;
+        report.inaccessible_processes = 1;
+        assert_eq!(
+            render_port_report(&report, false),
+            "Port 3000: no owner found\nSearch incomplete: 1 process inaccessible\n"
+        );
     }
 }

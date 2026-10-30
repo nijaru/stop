@@ -1,6 +1,5 @@
 //! Parse, dispatch, and map outcomes once. Human output is the default.
 
-use clap::Parser;
 use stop::cli::{Cli, Command, QueryArgs};
 use stop::cmd::{self, Outcome};
 use stop::error::StopError;
@@ -44,9 +43,9 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run(raw: Vec<std::ffi::OsString>, cancel: &Cancellation) -> Result<Outcome, StopError> {
-    let cli = match Cli::try_parse_from(raw) {
+    let cli = match Cli::parse_args(raw) {
         Ok(cli) => cli,
-        Err(err) if err.use_stderr() => return Err(StopError::InvalidRequest(err.to_string())),
+        Err(err) if err.use_stderr() => return Err(stop::output::usage_error(err)),
         Err(help) => {
             stop::output::print_help(&help, cancel)?;
             return Ok(Outcome::Success);

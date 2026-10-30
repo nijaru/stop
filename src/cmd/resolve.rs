@@ -53,9 +53,7 @@ pub fn resolve(
         [index] => Ok(*index),
         [] => Err(ResolveError {
             code: "not_found",
-            message: format!(
-                "no visible process matching '{target}'; search with stop list --name '{target}'"
-            ),
+            message: format!("no process found for {target:?}"),
             target: target.into(),
             candidates: vec![],
         }),
@@ -79,7 +77,7 @@ pub fn resolve(
             Err(ResolveError {
                 code: "ambiguous",
                 message: format!(
-                    "{} processes match '{target}'; inspect one with stop inspect <pid>",
+                    "{} processes named {target:?}; choose a PID",
                     candidates.len()
                 ),
                 target: target.into(),

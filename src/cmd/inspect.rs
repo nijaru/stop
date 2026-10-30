@@ -62,7 +62,7 @@ pub fn run(
         if output_args.document() {
             output::print_json(&envelope, output_args.pretty, cancel)?;
         } else {
-            output::print_port_report(&report, &data.metadata, window.is_some(), cancel)?;
+            output::print_port_report(&report, window.is_some(), cancel)?;
         }
         return Ok(if report.owners.is_empty() {
             Outcome::NoMatch
@@ -107,7 +107,7 @@ pub fn run(
     } else if let Some(process) = process {
         output::print_process_detail(process, &data.metadata, window.is_some(), cancel)?;
     } else {
-        output::print_no_match(target, cancel)?;
+        output::print_no_match(target, &data.metadata, cancel)?;
     }
     Ok(if process.is_some() {
         Outcome::Success

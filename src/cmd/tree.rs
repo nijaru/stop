@@ -66,10 +66,15 @@ pub fn run(
     };
     if output_args.document() {
         output::print_json(&report, output_args.pretty, cancel)?;
-    } else if report.roots.is_empty() {
-        output::print_no_match(target.unwrap_or("any process"), cancel)?;
+    } else if let Some(target) = target.filter(|_| report.roots.is_empty()) {
+        output::print_no_match(target, &report.collection, cancel)?;
     } else {
-        output::print_process_tree(&report.roots, collection.cpu.is_some(), cancel)?;
+        output::print_process_tree(
+            &report.roots,
+            &report.collection,
+            collection.cpu.is_some(),
+            cancel,
+        )?;
     }
     Ok(if report.roots.is_empty() {
         Outcome::NoMatch
