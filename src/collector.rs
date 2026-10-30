@@ -4,10 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use sysinfo::{
-    MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System,
-    UpdateKind,
-};
+use sysinfo::{MemoryRefreshKind, Pid, ProcessStatus, System};
 
 use crate::cli::QueryArgs;
 use crate::error::StopError;
@@ -15,6 +12,7 @@ use crate::identity;
 use crate::model::{CollectionMetadata, ProcessIdentity, ProcessInfo, SystemMetrics};
 use crate::runtime::Cancellation;
 
+mod acquire;
 mod users;
 use users::UserNames;
 
@@ -92,7 +90,7 @@ impl Sampler {
             .map(|at| at + sysinfo::MINIMUM_CPU_UPDATE_INTERVAL)
     }
 
-    pub fn sample(&mut self) -> Collection {
+    pub fn sample(&mut self) -> Result<Collection, StopError> {
         let start = Instant::now();
         let collection_started_at = Utc::now().to_rfc3339();
         self.sys
@@ -109,61 +107,12 @@ impl Sampler {
             None
         };
 
-        let pids = self.request.pid.map(|p| [Pid::from_u32(p)]);
-        let scope = match &pids {
-            Some(pids) => ProcessesToUpdate::Some(pids),
-            None => ProcessesToUpdate::All,
-        };
-        let basic = ProcessRefreshKind::nothing()
-            .without_tasks()
-            .with_memory()
-            .with_user(UpdateKind::Always);
-        // sysinfo caches names across exec and checks macOS generations only to
-        // whole seconds. Reacquire process records; retain only our strong CPU baselines.
-        let mut inventory = System::new();
-        inventory.refresh_processes_specifics(scope, true, basic);
-        let total_processes = inventory.processes().len();
-        let selected: Vec<Pid> = inventory
-            .processes()
-            .iter()
-            .filter(|(_, p)| {
-                let name = p.name().to_string_lossy();
-                let uid = p.user_id().map(|u| u.to_string());
-                self.request.pid.is_some()
-                    || (self
-                        .request
-                        .name
-                        .as_ref()
-                        .is_none_or(|n| name.to_lowercase().contains(&n.to_lowercase()))
-                        && self.request.user.as_ref().is_none_or(|u| {
-                            uid.as_ref() == Some(u)
-                                || p.user_id().and_then(|id| self.users.name(id))
-                                    == Some(u.as_str())
-                        }))
-            })
-            .map(|(pid, _)| *pid)
-            .collect();
-        let births: HashMap<_, _> = selected
-            .iter()
-            .map(|pid| (pid.as_u32(), identity::birth_id(pid.as_u32())))
-            .collect();
-        let mut kind = basic;
-        if self.request.cpu {
-            kind = kind.with_cpu();
-        }
-        if self.request.details {
-            kind = kind
-                .with_exe(UpdateKind::Always)
-                .with_cwd(UpdateKind::Always)
-                .with_disk_usage();
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            {
-                kind = kind.with_cmd(UpdateKind::Always);
-            }
-        }
-        // Start fresh again so *all* emitted facts fall inside the native birth checks.
-        let mut selected_sys = System::new();
-        selected_sys.refresh_processes_specifics(ProcessesToUpdate::Some(&selected), true, kind);
+        let acquire::Acquisition {
+            system: selected_sys,
+            selected,
+            births,
+            total_processes,
+        } = acquire::acquire(&self.request, &mut self.users)?;
         let measured_at = Instant::now();
         let mut next_baselines = HashMap::new();
         let mut processes = Vec::with_capacity(selected.len());
@@ -172,7 +121,11 @@ impl Sampler {
         for pid in selected {
             let id = pid.as_u32();
             let Some(p) = selected_sys.process(pid) else {
-                inaccessible_processes += 1;
+                // An absent requested PID is not an observed candidate unless
+                // the native before-read actually found it.
+                if self.request.pid != Some(id) || births.get(&id).is_some_and(Option::is_some) {
+                    inaccessible_processes += 1;
+                }
                 continue;
             };
             let threads = self.request.details.then(|| thread_count(id)).flatten();
@@ -341,7 +294,7 @@ impl Sampler {
         }
         self.baselines = next_baselines;
         let total = self.sys.total_memory();
-        Collection {
+        Ok(Collection {
             target,
             metadata: CollectionMetadata {
                 schema_version: crate::model::SCHEMA_VERSION,
@@ -365,7 +318,7 @@ impl Sampler {
             },
             total_processes,
             processes,
-        }
+        })
     }
 }
 
@@ -421,7 +374,7 @@ pub fn collect(
 ) -> Result<Collection, StopError> {
     let mut sampler = Sampler::new(request);
     if let Some(window) = window {
-        sampler.sample();
+        sampler.sample()?;
         if !cancel.wait_until(Instant::now() + window)? {
             return Err(StopError::Interrupted);
         }
@@ -429,7 +382,7 @@ pub fn collect(
     if cancel.interrupted() {
         return Err(StopError::Interrupted);
     }
-    Ok(sampler.sample())
+    sampler.sample()
 }
 
 pub fn millis(duration: Duration) -> u64 {

@@ -84,7 +84,7 @@ pub fn run(
     let started_at = Utc::now().to_rfc3339();
     let mut sampler = Sampler::new(Request::query(&args.query, true));
     let mut pin = PinnedTarget::default();
-    let mut baseline = sampler.sample();
+    let mut baseline = sampler.sample()?;
     let mut failure = if args.query.pid.is_some() {
         pin.restrict(&baseline.target, &mut baseline.processes)
             .err()
@@ -112,7 +112,13 @@ pub fn run(
         if !cancel.wait_until(deadline)? {
             break;
         }
-        let mut data = sampler.sample();
+        let mut data = match sampler.sample() {
+            Ok(data) => data,
+            Err(err) => {
+                failure = Some(err);
+                break;
+            }
+        };
         let target_status = if args.query.pid.is_some() {
             match pin.restrict(&data.target, &mut data.processes) {
                 Ok(status) => Some(status),

@@ -5,6 +5,8 @@ pub mod cmd;
 pub mod collector;
 pub mod error;
 pub mod identity;
+#[cfg(target_os = "macos")]
+mod libproc;
 pub mod model;
 pub mod output;
 pub mod ports;

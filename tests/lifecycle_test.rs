@@ -319,7 +319,7 @@ fn sampling_refreshes_exec_names_before_filtering() {
         name: Some("sleep".into()),
         ..Request::default()
     });
-    let first = sampler.sample();
+    let first = sampler.sample().unwrap();
     assert!(first.processes.is_empty());
     assert!(
         matches!(first.target, TargetObservation::Observed(_)),
@@ -328,7 +328,7 @@ fn sampling_refreshes_exec_names_before_filtering() {
     child.0.stdin.take().unwrap().write_all(b"go\n").unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
-        let data = sampler.sample();
+        let data = sampler.sample().unwrap();
         if let Some(process) = data.processes.first() {
             assert_eq!(process.name, "sleep");
             assert_eq!(process.pid, child.0.id());
