@@ -279,7 +279,8 @@ fn inspect_preserves_empty_and_whitespace_arguments() {
         expected
             .iter()
             .map(|arg| format!("{arg:?}"))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>(),
+        "human inspection did not preserve argv:\n{text}"
     );
 }
 
