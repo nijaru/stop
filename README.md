@@ -75,8 +75,9 @@ stop inspect --port 3000 --json
 A canonical decimal positional target is a PID; other targets are exact
 names. There is no substring fallback. Search with `stop list --name ...`,
 then inspect a PID. Multiple exact matches return exit 3 with candidate
-identities on stderr. Human details quote argument boundaries; JSON preserves
-the argument array. Arguments and paths can contain secrets—take care before
+identities on stderr. Human details quote argument boundaries. Long argument
+lists use indexed entries with indented continuation lines; values wrap without
+losing text. JSON preserves the argument array. Arguments and paths can contain secrets—take care before
 sharing an inspection report.
 
 Port inspection reports visible TCP listeners and UDP bindings. Established
@@ -169,8 +170,8 @@ unsupported on macOS. Human output escapes terminal controls in process text;
 `NO_COLOR` disables color, which is otherwise terminal-only.
 
 Human reports use local time; process start times include the UTC offset.
-Sample headings show the local date and time to the millisecond. Detailed acquisition
-windows and CPU measurement intervals are available in JSON. Process tables
+Sample headings show the local date and time to the millisecond. Detailed
+acquisition windows and CPU measurement intervals are available in JSON. Process tables
 shorten names and usernames to fit the terminal, without shortening numbers.
 A short notice identifies incomplete process data or an incomplete port
 search. An empty report means nothing was found, not that a process or port

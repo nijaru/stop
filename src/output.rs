@@ -13,6 +13,7 @@ use crate::runtime::Cancellation;
 
 mod diagnostic;
 mod table;
+mod text;
 mod writer;
 
 use writer::Destination;
@@ -108,7 +109,7 @@ fn process_table(processes: &[ProcessInfo], cpu: bool) -> String {
         &headers,
         rows,
         &[0, 3, 4],
-        &[(2, usize::MAX), (1, 16)],
+        &[(2, usize::MAX, 8), (1, 16, 4)],
         terminal_width(Destination::Stdout),
         use_color(Destination::Stdout),
     )
@@ -145,11 +146,19 @@ fn render_snapshot(
     }
     if snapshot.truncated {
         out.push_str(&format!(
-            "{} of {} processes\n",
+            "{} of {} processes",
             snapshot.returned, snapshot.matched
         ));
+        if snapshot.collection.inaccessible_processes > 0 {
+            out.push_str(&format!(
+                " · incomplete data: {}",
+                snapshot.collection.inaccessible_processes
+            ));
+        }
+        out.push('\n');
+    } else {
+        append_visibility(&mut out, &snapshot.collection);
     }
-    append_visibility(&mut out, &snapshot.collection);
     out
 }
 
@@ -236,12 +245,7 @@ pub fn print_process_detail(
         _ => "n/a".to_owned(),
     };
     let started = format_start_time(p.start_time);
-    let argv = p
-        .cmdline
-        .iter()
-        .map(|s| safe(&format!("{s:?}")))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let width = terminal_width(Destination::Stdout);
     for (label, value) in [
         ("Started", started),
         (
@@ -258,14 +262,15 @@ pub fn print_process_detail(
                 .map(safe)
                 .unwrap_or_else(|| unavailable("cwd")),
         ),
-        (
-            "Arguments",
-            if argv.is_empty() {
-                unavailable("cmdline")
-            } else {
-                argv
-            },
-        ),
+    ] {
+        text::field(&mut out, label, &value, width);
+    }
+    if p.cmdline.is_empty() {
+        text::field(&mut out, "Arguments", &unavailable("cmdline"), width);
+    } else {
+        text::arguments(&mut out, &p.cmdline, width);
+    }
+    for (label, value) in [
         (
             "Parent",
             p.ppid
@@ -303,16 +308,17 @@ pub fn print_process_detail(
                 .unwrap_or_else(|| unavailable("io_written_bytes")),
         ),
     ] {
-        out.push_str(&format!("{label:<12} {value}\n"));
+        text::field(&mut out, label, &value, width);
     }
     if cpu {
-        out.push_str(&format!(
-            "{:<12} {}\n",
+        text::field(
+            &mut out,
             "CPU",
-            p.cpu_percent
+            &p.cpu_percent
                 .map(|v| format!("{v:.1}%"))
-                .unwrap_or_else(|| unavailable("cpu_percent"))
-        ));
+                .unwrap_or_else(|| unavailable("cpu_percent")),
+            width,
+        );
     }
     append_visibility(&mut out, metadata);
     write_stdout(&out, cancel)
@@ -450,7 +456,7 @@ fn render_port_report(report: &PortReport, cpu: bool) -> String {
             &headers,
             rows,
             &[0, 5],
-            &[(2, usize::MAX), (1, 16)],
+            &[(2, usize::MAX, 8), (1, 16, 4)],
             terminal_width(Destination::Stdout),
             use_color(Destination::Stdout),
         ));
@@ -541,6 +547,19 @@ mod tests {
                 assert!(text.starts_with("12345"));
             }
         }
+    }
+
+    #[test]
+    fn truncated_snapshots_combine_counts_and_data_gaps_without_hiding_either() {
+        let mut second = process();
+        second.pid += 1;
+        let snapshot = Snapshot::finish(metadata(), 2, vec![process(), second], Some(1));
+        let text = render_snapshot(&snapshot, None, false, "No matching processes found");
+        assert!(
+            text.ends_with("1 of 2 processes · incomplete data: 1\n"),
+            "{text}"
+        );
+        assert_eq!(text.matches("incomplete data").count(), 1);
     }
 
     #[test]

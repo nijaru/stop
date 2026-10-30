@@ -32,13 +32,14 @@ fn pad(value: &str, width: usize, right: bool) -> String {
     }
 }
 
-/// Flexible columns have (index, maximum width), in shrinking priority order.
-/// Numeric columns and addresses stay intact even if the terminal is too small.
+/// Flexible columns have (index, maximum, preferred minimum) widths. First
+/// shrink to those minima in priority order, then sacrifice lower-priority
+/// columns before shortening important text further. Numbers stay intact.
 pub(super) fn render(
     headers: &[&str],
     rows: Vec<Vec<String>>,
     right: &[usize],
-    flexible: &[(usize, usize)],
+    flexible: &[(usize, usize, usize)],
     width: usize,
     color: bool,
 ) -> String {
@@ -53,11 +54,16 @@ pub(super) fn render(
                 .max(header.width())
         })
         .collect();
-    for &(i, max) in flexible {
+    for &(i, max, _) in flexible {
         widths[i] = widths[i].min(max);
     }
     let mut excess = (widths.iter().sum::<usize>() + 2 * (headers.len() - 1)).saturating_sub(width);
-    for &(i, _) in flexible {
+    for &(i, _, min) in flexible {
+        let reduction = excess.min(widths[i].saturating_sub(min));
+        widths[i] -= reduction;
+        excess -= reduction;
+    }
+    for &(i, _, _) in flexible.iter().rev() {
         let reduction = excess.min(widths[i].saturating_sub(1));
         widths[i] -= reduction;
         excess -= reduction;
@@ -112,16 +118,17 @@ mod tests {
             vec![vec![
                 "12345".into(),
                 "long_username".into(),
-                "❤️❤️abcd".into(),
+                "worker-process".into(),
                 "123.4".into(),
                 "123.4 MiB".into(),
             ]],
             &[0, 3, 4],
-            &[(2, usize::MAX), (1, 16)],
+            &[(2, usize::MAX, 8), (1, 16, 4)],
             32,
             false,
         );
         assert!(out.lines().all(|line| line.width() <= 32), "{out}");
         assert!(out.contains("12345") && out.contains("123.4 MiB"));
+        assert!(out.contains("wor…"), "{out}");
     }
 }

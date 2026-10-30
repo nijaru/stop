@@ -90,7 +90,7 @@ fn human_error(err: &StopError) -> String {
             &["PID", "USER", "NAME", "STARTED", "PATH"],
             rows,
             &[0],
-            &[(4, 60), (2, usize::MAX), (1, 16)],
+            &[(4, 60, 8), (2, usize::MAX, 8), (1, 16, 4)],
             terminal_width(Destination::Stderr),
             use_color(Destination::Stderr),
         ));

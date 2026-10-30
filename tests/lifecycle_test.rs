@@ -221,6 +221,7 @@ fn sigint_stops_a_blocked_writer_and_restores_shared_stdout_flags() {
 #[test]
 fn inspect_preserves_empty_and_whitespace_arguments() {
     let program = "/bin//sh";
+    let long = "a long argument with 日本語 and 👩‍💻 ".repeat(20);
     let args = [
         "-c",
         "read line",
@@ -229,6 +230,7 @@ fn inspect_preserves_empty_and_whitespace_arguments() {
         "",
         " \t padded \n ",
         "Unicode-λ",
+        &long,
         "",
     ];
     let child = OwnedChild(
@@ -248,6 +250,37 @@ fn inspect_preserves_empty_and_whitespace_arguments() {
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     let expected: Vec<_> = std::iter::once(program).chain(args).collect();
     assert_eq!(report["process"]["cmdline"], serde_json::json!(expected));
+
+    let human = Command::new(env!("CARGO_BIN_EXE_stop"))
+        .args(["inspect", &child.0.id().to_string()])
+        .output()
+        .unwrap();
+    assert!(human.status.success());
+    let text = String::from_utf8(human.stdout).unwrap();
+    let mut quoted = Vec::<String>::new();
+    let mut indent = 0;
+    for line in text
+        .lines()
+        .skip_while(|line| *line != "Arguments")
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+    {
+        if let Some(entry) = line.strip_prefix("  [") {
+            let (index, value) = entry.split_once("] ").unwrap();
+            assert_eq!(index.parse::<usize>().unwrap(), quoted.len());
+            indent = line.len() - value.len();
+            quoted.push(value.to_owned());
+        } else {
+            quoted.last_mut().unwrap().push_str(&line[indent..]);
+        }
+    }
+    assert_eq!(
+        quoted,
+        expected
+            .iter()
+            .map(|arg| format!("{arg:?}"))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[cfg(target_os = "linux")]
