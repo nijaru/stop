@@ -6,10 +6,12 @@ use sysinfo::{ProcessStatus, Uid};
 use super::{Request, UserNames};
 use crate::StopError;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 mod fallback;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 
 pub(super) struct Acquisition {
     pub records: Vec<Facts>,
@@ -41,6 +43,8 @@ pub(super) struct Facts {
 pub(super) fn acquire(request: &Request, users: &mut UserNames) -> Result<Acquisition, StopError> {
     #[cfg(target_os = "linux")]
     return linux::acquire(request, users);
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    return macos::acquire(request, users);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     fallback::acquire(request, users)
 }

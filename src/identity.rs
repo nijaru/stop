@@ -13,6 +13,15 @@ pub(crate) fn bsd_info(pid: u32) -> Option<libc::proc_bsdinfo> {
     platform::bsd_info(pid)
 }
 
+/// Encode a validated native BSD birth without a second process read.
+#[cfg(target_os = "macos")]
+pub(crate) fn bsd_birth_id(info: &libc::proc_bsdinfo) -> String {
+    format!(
+        "macos:{}:{:06}",
+        info.pbi_start_tvsec, info.pbi_start_tvusec
+    )
+}
+
 /// Identify the boot and PID-numbering scope used by native process reads.
 /// Failure to establish that scope is explicit rather than machine-global trust.
 pub fn scope_id() -> Option<String> {
@@ -59,10 +68,7 @@ mod platform {
 
     pub(super) fn birth_id(pid: u32) -> Option<String> {
         let info = bsd_info(pid)?;
-        Some(format!(
-            "macos:{}:{:06}",
-            info.pbi_start_tvsec, info.pbi_start_tvusec
-        ))
+        Some(super::bsd_birth_id(&info))
     }
 
     pub(super) fn bsd_info(pid: u32) -> Option<libc::proc_bsdinfo> {

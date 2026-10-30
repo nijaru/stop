@@ -1,5 +1,6 @@
 //! Native argv reads: backend normalization must not erase empty or padded arguments.
 
+#[cfg(target_os = "linux")]
 pub(crate) fn read(pid: u32) -> Vec<String> {
     platform::read(pid).unwrap_or_default()
 }
@@ -46,62 +47,94 @@ mod platform {
 }
 
 #[cfg(target_os = "macos")]
+pub(crate) use platform::MacArgs;
+
+#[cfg(target_os = "macos")]
 mod platform {
     use std::mem::size_of;
     use std::ptr;
 
-    pub(super) fn read(pid: u32) -> Option<Vec<String>> {
-        let native_pid = libc::pid_t::try_from(pid).ok()?;
-        let info = crate::identity::bsd_info(pid)?;
-        // From macOS sys/proc_info.h; not exported by libc.
-        const PROC_FLAG_LP64: u32 = 0x10;
-        let word_size = if info.pbi_flags & PROC_FLAG_LP64 != 0 {
-            8
-        } else {
-            4
-        };
-        let mut arg_max: libc::c_int = 0;
-        let mut len = size_of::<libc::c_int>();
-        let mut limit_mib = [libc::CTL_KERN, libc::KERN_ARGMAX];
-        // SAFETY: the MIB, integer and length are valid for their declared
-        // sizes; null newp requests a read and no pointers are retained.
-        let result = unsafe {
-            libc::sysctl(
-                limit_mib.as_mut_ptr(),
-                2,
-                (&mut arg_max as *mut libc::c_int).cast(),
-                &mut len,
-                ptr::null_mut(),
-                0,
-            )
-        };
-        if result != 0 || len != size_of::<libc::c_int>() || arg_max <= 0 {
-            return None;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Path;
+
+    /// One initialized buffer per acquisition, not a cache of process records.
+    pub(crate) struct MacArgs {
+        bytes: Vec<u8>,
+    }
+
+    pub(crate) struct Args<'a> {
+        bytes: &'a [u8],
+    }
+
+    impl MacArgs {
+        pub(crate) fn new() -> Option<Self> {
+            let mut arg_max: libc::c_int = 0;
+            let mut len = size_of::<libc::c_int>();
+            let mut limit_mib = [libc::CTL_KERN, libc::KERN_ARGMAX];
+            // SAFETY: the MIB, integer and length are valid for their declared
+            // sizes; null newp requests a read and no pointers are retained.
+            let result = unsafe {
+                libc::sysctl(
+                    limit_mib.as_mut_ptr(),
+                    2,
+                    (&mut arg_max as *mut libc::c_int).cast(),
+                    &mut len,
+                    ptr::null_mut(),
+                    0,
+                )
+            };
+            if result != 0 || len != size_of::<libc::c_int>() || arg_max <= 0 {
+                return None;
+            }
+            // A size query for this PID races exec. XNU can return truncated data
+            // with success, so use the kernel maximum and reject a full buffer.
+            let capacity = usize::try_from(arg_max)
+                .ok()?
+                .checked_add(size_of::<libc::c_int>())?;
+            Some(Self {
+                bytes: vec![0u8; capacity],
+            })
         }
-        // A size query for this PID races exec. XNU can return truncated data
-        // with success, so use the kernel maximum and reject a full buffer.
-        let capacity = usize::try_from(arg_max)
-            .ok()?
-            .checked_add(size_of::<libc::c_int>())?;
-        let mut bytes = vec![0u8; capacity];
-        len = bytes.len();
-        let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, native_pid];
-        // SAFETY: bytes is initialized writable storage for len bytes; mib and
-        // len are valid, and the API retains none of these pointers.
-        let result = unsafe {
-            libc::sysctl(
-                mib.as_mut_ptr(),
-                3,
-                bytes.as_mut_ptr().cast(),
-                &mut len,
-                ptr::null_mut(),
-                0,
-            )
-        };
-        if result != 0 || len >= bytes.len() {
-            return None;
+
+        pub(crate) fn read(&mut self, pid: u32) -> Option<Args<'_>> {
+            let native_pid = libc::pid_t::try_from(pid).ok().filter(|&p| p > 0)?;
+            let mut len = self.bytes.len();
+            let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, native_pid];
+            // SAFETY: bytes is initialized writable storage for len bytes; mib
+            // and len are valid, and the API retains none of these pointers.
+            let result = unsafe {
+                libc::sysctl(
+                    mib.as_mut_ptr(),
+                    3,
+                    self.bytes.as_mut_ptr().cast(),
+                    &mut len,
+                    ptr::null_mut(),
+                    0,
+                )
+            };
+            // XNU's small-buffer success path can copy a tail slice, not the
+            // executable prefix. Never interpret a full buffer as a prefix or
+            // decode stale bytes beyond the returned length after reuse.
+            initialized(&self.bytes, result, len).map(|bytes| Args { bytes })
         }
-        parse(&bytes[..len], word_size)
+    }
+
+    fn initialized(bytes: &[u8], result: libc::c_int, len: usize) -> Option<&[u8]> {
+        (result == 0 && len < bytes.len()).then(|| &bytes[..len])
+    }
+
+    impl Args<'_> {
+        pub(crate) fn executable(&self) -> Option<&Path> {
+            let data = self.bytes.get(4..)?;
+            let end = data.iter().position(|&b| b == 0)?;
+            (end > 0).then(|| Path::new(std::ffi::OsStr::from_bytes(&data[..end])))
+        }
+
+        pub(crate) fn argv(&self, flags: u32) -> Vec<String> {
+            // PROC_FLAG_LP64 from SDK sys/proc_info.h (not exported by libc).
+            let word_size = if flags & 0x10 != 0 { 8 } else { 4 };
+            parse(self.bytes, word_size).unwrap_or_default()
+        }
     }
 
     fn parse(bytes: &[u8], word_size: usize) -> Option<Vec<String>> {
@@ -157,6 +190,24 @@ mod platform {
                     ])
                 );
             }
+        }
+
+        #[test]
+        fn bounds_reused_native_storage_and_requires_complete_executable() {
+            let mut bytes = 1i32.to_ne_bytes().to_vec();
+            bytes.extend_from_slice(b"/alias-name\0old-tail\0");
+            assert!(initialized(&bytes, -1, 5).is_none());
+            assert!(initialized(&bytes, 0, bytes.len()).is_none());
+            assert!(initialized(&bytes, 0, usize::MAX).is_none());
+            let short = Args {
+                bytes: initialized(&bytes, 0, 9).unwrap(),
+            };
+            assert!(short.executable().is_none());
+            let valid = Args {
+                bytes: initialized(&bytes, 0, 16).unwrap(),
+            };
+            assert_eq!(valid.executable(), Some(Path::new("/alias-name")));
+            assert!(valid.argv(0x10).is_empty());
         }
 
         #[test]
