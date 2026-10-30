@@ -308,6 +308,8 @@ fn inspect_unknown_pid_exits_two() {
     assert!(output.stderr.is_empty());
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(report["process"].is_null());
+    // A requested but absent PID is not an observed inaccessible candidate.
+    assert_eq!(report["inaccessible_processes"], 0);
 }
 
 #[test]
